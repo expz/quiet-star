@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "quiet-star"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = "^2.2.2"
+transformers = "^4.39.2"
+datasets = "^2.18.0"
+triton = "^2.2.0"
+lightning = "^2.2.1"
+black = "^24.3.0"
+ipykernel = "^6.29.4"
+pytest = "^8.1.1"
+rich = "^13.7.1"
+ipywidgets = "^8.1.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
