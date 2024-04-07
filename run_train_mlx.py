@@ -1,7 +1,7 @@
 import torch
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.train import train_gpt
+from quiet_star.train_mlx import train_gpt
 
 
 def main():
@@ -10,11 +10,14 @@ def main():
         epochs=2,
         seed=1,
         model=ModelConfig(
-            attn_type="torch",
-            device=torch.device("cpu"),
+            attn_type="mlx",
+            device="mps",
             dropout_attn=0.0,
             dropout_embed=0.0,
-            dtype=torch.float32,
+            dtype="bfloat16",
+            embed_dim=6 * 64,
+            num_heads=6,
+            num_layers=6,
         ),
     )
     train_gpt(config)

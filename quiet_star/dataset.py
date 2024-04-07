@@ -1,13 +1,14 @@
+import os.path
 import pathlib
 import random
 from typing import Callable
 
 import datasets
-from datasets import load_dataset
-from transformers import AutoTokenizer
 from huggingface_hub import HfFileSystem
-
+from transformers import AutoTokenizer
 import torch.utils.data
+
+DATASET_LOCAL_PATH = "data/open-web-math"
 
 
 def random_split_on_whitespace(text: str, min_remaining_whitespace: int = 256) -> str:
@@ -56,13 +57,27 @@ def process_batch(
     return _process
 
 
+def to_mlx(samples: dict[str, list]) -> dict[str, list]:
+    return {"input_ids": samples["input_ids"].astype("uint32")}
+
+
 def get_open_web_math_dataset(
     tokenizer: AutoTokenizer,
     max_length: int,
     file_count: int = 1,
     max_samples: int | None = None,
     test_pct: float = 0.125,
+    tensor_type: str = "torch",
+    use_local_cache: bool = True,
 ) -> torch.utils.data.Dataset:
+    cache_path = os.path.join(DATASET_LOCAL_PATH, tensor_type)
+    if use_local_cache:
+        try:
+            split_dataset = datasets.load_from_disk(cache_path)
+            return split_dataset
+        except Exception as e:
+            print(f"local dataset loading failed ({e}). downloading dataset.")
+
     fs = HfFileSystem()
 
     # List all ".parquet" files in the repo
@@ -72,7 +87,7 @@ def get_open_web_math_dataset(
         for path in paths
     ]
 
-    large_dataset = load_dataset(
+    large_dataset = datasets.load_dataset(
         "open-web-math/open-web-math",
         data_files={"train": relative_paths[:file_count]},
         num_proc=8,
@@ -89,10 +104,19 @@ def get_open_web_math_dataset(
         )
     )
     small_dataset = small_dataset.remove_columns("text")
-    small_dataset.set_format("pt", columns=["input_ids"], output_all_columns=True)
+
+    if tensor_type == "mlx":
+        small_dataset.set_format(
+            "numpy", columns=["input_ids"], output_all_columns=True
+        )
+        small_dataset = small_dataset.map(to_mlx, batched=True)
+    else:
+        small_dataset.set_format(
+            tensor_type, columns=["input_ids"], output_all_columns=True
+        )
 
     split_dataset = small_dataset.train_test_split(test_size=test_pct, shuffle=True)
 
-    split_dataset.save_to_disk("data/open-web-math")
+    split_dataset.save_to_disk(cache_path)
 
     return split_dataset

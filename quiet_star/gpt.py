@@ -1,4 +1,3 @@
-import math
 import torch
 import torch.nn
 from torch.nn import functional as F
@@ -10,8 +9,12 @@ import lightning.pytorch
 import torch.utils.data
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.attention_triton import TritonCausalSelfAttention
 from quiet_star.attention_torch import TorchCausalSelfAttention
+
+try:
+    from quiet_star.attention_triton import TritonCausalSelfAttention
+except ModuleNotFoundError:
+    pass
 
 
 class GELU(torch.nn.Module):

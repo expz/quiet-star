@@ -7,15 +7,15 @@ import torch
 @dataclasses.dataclass
 class ModelConfig:
     attn_type: str = "torch"
-    device: torch.device = torch.device("cuda")
+    device: str = "cpu"
     dropout_attn: float = 0.0
     dropout_embed: float = 0.0
-    dtype: torch.dtype = torch.float32
-    embed_dim: int = 64 * 12
+    dtype: str = "float32"
+    embed_dim: int = 64 * 6
     max_length: int = 256
     model_name: str = "Qwen/Qwen1.5-0.5B"
-    num_heads: int = 12
-    num_layers: int = 12
+    num_heads: int = 6
+    num_layers: int = 8
 
 
 @dataclasses.dataclass
