@@ -1136,6 +1136,29 @@ files = [
 ]
 
 [[package]]
+name = "mlx"
+version = "0.9.1"
+description = "A framework for machine learning on Apple silicon."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "mlx-0.9.1-cp310-cp310-macosx_13_0_arm64.whl", hash = "sha256:84bf8d0e7f08fcca9d5edd1130770f02b82098de6b35fdfca5d8fd4b15617ef5"},
+    {file = "mlx-0.9.1-cp310-cp310-macosx_14_0_arm64.whl", hash = "sha256:dfa5ae57d17928bc3d5dad4ad3b63b5256197d189f6b4997a6652c17f0b24350"},
+    {file = "mlx-0.9.1-cp311-cp311-macosx_13_0_arm64.whl", hash = "sha256:d542fc01a3c3d0dcbec7169ae052aec63c218405bb1372c2a404709af5600464"},
+    {file = "mlx-0.9.1-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:7be34d8ec817569776a18db1da50fc6ece5c16c10b1ae6a8cb3607bd782fb4bb"},
+    {file = "mlx-0.9.1-cp312-cp312-macosx_13_0_arm64.whl", hash = "sha256:9760061b52c74ad8c9e75a36e8bc0441e99c6c200fe645565f9c7d044636db2b"},
+    {file = "mlx-0.9.1-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:985c15e5dd154cce94d1a00f033ecdbc4390b1580c715c2547f2889b8dcebc7c"},
+    {file = "mlx-0.9.1-cp38-cp38-macosx_13_0_arm64.whl", hash = "sha256:4b304eb3b4ba193984c068b4d22d3aae405e3560bd1608e8fad185a9685b1f08"},
+    {file = "mlx-0.9.1-cp38-cp38-macosx_14_0_arm64.whl", hash = "sha256:920e7b59734d1e0fca82d4941d080fe7c7a31d946c17d9df0f69d62756ff1b28"},
+    {file = "mlx-0.9.1-cp39-cp39-macosx_13_0_arm64.whl", hash = "sha256:c89f4c8703cd4c4aa72ab5c4e6fdd2aba4f48f1b9e5e54f161b506316a6e83bc"},
+    {file = "mlx-0.9.1-cp39-cp39-macosx_14_0_arm64.whl", hash = "sha256:9654164b3d01a5aab7077bb85ee6216685a6d87cbefeeb1983b1b42cde34bdd2"},
+]
+
+[package.extras]
+dev = ["pre-commit"]
+testing = ["numpy", "torch"]
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 description = "Python library for arbitrary-precision floating-point arithmetic"
@@ -3061,4 +3084,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "ba1dc05e0bf5914c3383b4796d446eadea3b4392af4ad8095b9ac17ddb65adf2"
+content-hash = "524846051f11bb90289f0b70f92930b152fe13852d8044c900e1c64088efe2c3"
