@@ -25,6 +25,7 @@ class Config:
     epochs: int = 2
     learning_rate: float = 1e-5
     max_samples: int = 2048
+    max_thought_length: int = 12
     seed: int = 123
     test_pct: float = 0.125
     weight_decay: float = 0.01

@@ -1,3 +1,5 @@
+import math
+
 import mlx.core
 import mlx.nn
 import mlx.optimizers
@@ -8,6 +10,10 @@ from transformers import AutoTokenizer
 from quiet_star.config import Config, ModelConfig
 from quiet_star.mlx import MLXModule
 from quiet_star.utils import mlx_dtype
+
+
+START_THOUGHT_TOKEN = "<|startofthought|>"
+END_THOUGHT_TOKEN = "<|endofthought|>"
 
 
 class SelfAttentionBlock(mlx.nn.Module):
@@ -52,25 +58,44 @@ class _GPTModel(mlx.nn.Module):
 
         model_config = config.model
 
+        self.embed_dim = model_config.embed_dim
+        self.max_thought_length = config.max_thought_length
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_config.model_name)
+
+        special_tokens_dict = {
+            "additional_special_tokens": [
+                START_THOUGHT_TOKEN,
+                END_THOUGHT_TOKEN,
+            ],
+        }
+
+        num_added_tokens = self.tokenizer.add_special_tokens(special_tokens_dict)
+        assert (
+            num_added_tokens == 2
+        ), f"attempted to add 2 tokens but {num_added_tokens} were added"
+
+        self.start_thought_token_id = self.tokenizer(
+            START_THOUGHT_TOKEN, return_attention_mask=False
+        )["input_ids"][0]
+        self.end_thought_token_id = self.tokenizer(
+            END_THOUGHT_TOKEN, return_attention_mask=False
+        )["input_ids"][0]
+
         vocab_size = len(self.tokenizer)
 
         self.tok_emb = mlx.nn.Embedding(
             vocab_size,
             model_config.embed_dim,
         )
-        self.pos_emb = mlx.core.random.normal(
-            [
-                1,
-                model_config.max_length,
-                model_config.embed_dim,
-            ],
-            dtype=mlx_dtype(model_config.dtype),
+        self.pos_emb = mlx.nn.Embedding(
+            model_config.max_length,
+            model_config.embed_dim,
         )
         self.drop = mlx.nn.Dropout(model_config.dropout_embed)
-        self.layers = mlx.nn.Sequential(
-            *[SelfAttentionBlock(model_config) for _ in range(model_config.num_layers)]
-        )
+        self.layers = [
+            SelfAttentionBlock(model_config) for _ in range(model_config.num_layers)
+        ]
         self.ln = mlx.nn.LayerNorm(model_config.embed_dim)
         self.lm_head = mlx.nn.Linear(
             model_config.embed_dim,
@@ -83,14 +108,145 @@ class _GPTModel(mlx.nn.Module):
 
     def __call__(self, x: mlx.core.array) -> mlx.core.array:
         token_embeddings = self.tok_emb(x)
-        position_embeddings = self.pos_emb[:, : token_embeddings.shape[1], :]
+        position_embeddings = self.pos_emb(
+            mlx.core.arange(0, token_embeddings.shape[1], dtype=mlx.core.uint32)
+        )
 
         x = self.drop(token_embeddings + position_embeddings)
-        x = self.layers(x)
+        for layer in self.layers:
+            x = layer(x)
         x = self.ln(x)
         logits = self.lm_head(x)
 
         return logits
+
+    def sample_next_tokens(self, logits: mlx.core.array) -> mlx.core.array:
+        pass
+
+    def generate_thoughts(self, x: mlx.core.array) -> mlx.core.array:
+        b, l, e = x.shape
+
+        x = mlx.core.expand_dims(x, axis=2)
+        start_token = mlx.core.full(
+            (b, l, 1, e), self.start_thought_token_id, dtype=mlx.core.uint32
+        )
+        x = mlx.core.concatenate([x, start_token], axis=2)
+
+        activation_cache = None
+        for t in range(1, self.max_thought_length + 1):
+            logits, activation_cache = self.generate_next_thought_token(
+                x, t, activation_cache
+            )
+            x = self.sample_next_tokens(logits)
+
+    def generate_next_thought_token(
+        self,
+        x: mlx.core.array,
+        t: int,
+        activation_cache: list[dict[str, mlx.core.array]] | None = None,
+    ) -> mlx.core.array:
+        b, l, d, e = x.shape
+
+        causal_mask = mlx.core.triu(
+            mlx.core.full((l, l), float("-inf"), dtype=x.dtype),
+            k=1,
+        )
+
+        # rows = mlx.core.arange(0, t, dtype=mlx.core.uint32).reshape(1, t)
+        # row_offsets = mlx.core.arange(0, l, dtype=mlx.core.uint32).reshape(l, 1)
+        # position_embeddings = self.pos_emb(rows + row_offsets)
+        position_embeddings = self.pos_emb(
+            mlx.core.arange(t, l + t, dtype=mlx.core.uint32)
+        )
+        token_embeddings = self.tok_emb(x)
+
+        x = self.drop(token_embeddings + position_embeddings)
+        for i, layer in enumerate(self.layers):
+            x = layer.ln1(x)
+            if activation_cache:
+                q = (
+                    layer.leaf_modules()["query_proj"](x)
+                    .reshape(b, l, 1, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 1, 2, 4])
+                )
+                k1 = activation_cache[i]["k1"]
+                v1 = activation_cache[i]["v1"]
+                k2 = (
+                    layer.leaf_modules()["key_proj"](x)
+                    .reshape(b, l, 1, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 1, 2, 4])
+                )
+                v2 = (
+                    layer.leaf_modules()["value_proj"](x)
+                    .reshape(b, l, 1, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 1, 2, 4])
+                )
+                k2 = mlx.core.concatenate([activation_cache["k2"], k2], axis=-2)
+                v2 = mlx.core.concatenate([activation_cache["v2"], v2], axis=-2)
+            else:
+                q = (
+                    layer.leaf_modules()["query_proj"](x)
+                    .reshape(b, l, d, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 1, 2, 4])
+                )
+                k1 = (
+                    layer.leaf_modules()["key_proj"](x[:, :, 0, :])
+                    .reshape(b, l, 1, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 2, 1, 4])
+                )
+                k2 = (
+                    layer.leaf_modules()["key_proj"](x)
+                    .reshape(b, l, d, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 1, 2, 4])
+                )
+                v1 = (
+                    layer.leaf_modules()["value_proj"](x[:, :, 0, :])
+                    .reshape(b, l, 1, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 2, 1, 4])
+                )
+                v2 = (
+                    layer.leaf_modules()["value_proj"](x)
+                    .reshape(b, l, d, layer.attn.num_heads, -1)
+                    .transpose([0, 3, 1, 2, 4])
+                )
+
+            # cache activations for future forward passes
+            activation_cache[i]["k1"] = k1
+            activation_cache[i]["k2"] = k2
+            activation_cache[i]["v1"] = v1
+            activation_cache[i]["v2"] = v2
+
+            a = mlx.core.softmax(
+                mlx.core.concatenate(
+                    [
+                        # (B, H, L, D, E) @ (B, H, 1, E, L) => (B, H, L, D, L)
+                        mlx.core.matmul(q, k1.transpose([0, 1, 2, 4, 3])) + causal_mask,
+                        # (B, H, L, D, E) @ (B, H, L, E, T) => (B, H, L, D, T)
+                        mlx.core.matmul(q, k2.transpose([0, 1, 2, 4, 3])),
+                    ],
+                    axis=-1,
+                )
+                / math.sqrt(self.embed_dim),
+                axis=-1,
+            )
+            a1 = a[:, :, :, :, :l]
+            a2 = a[:, :, :, :, l:]
+            # attn_out is (B, H, L, D, E)
+            attn_out = (
+                # (B, H, L, D, L) @ (B, H, 1, L, E) => (B, H, L, D, E)
+                mlx.core.matmul(a1, v1)
+                # (B, H, L, D, T) @ (B, H, L, T + 1, E) => (B, H, L, D, E)
+                + mlx.core.matmul(a2, v2)
+            )
+            attn_out = layer.leaf_modules()["out_proj"](
+                attn_out.transpose([0, 2, 3, 1, 4]).reshape(b, l, d, -1)
+            )
+            x = x + attn_out
+            x = x + layer.mlp(layer.ln2(x))
+        x = self.ln(x)
+        logits = self.lm_head(x)
+
+        return logits, activation_cache
 
 
 class GPTModel(MLXModule):
