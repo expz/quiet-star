@@ -192,8 +192,8 @@ class _GPTModel(mlx.nn.Module):
                     .reshape(b, l, 1, layer.attn.num_heads, -1)
                     .transpose([0, 3, 1, 2, 4])
                 )
-                k2 = mlx.core.concatenate([activation_cache["k2"], k2], axis=-2)
-                v2 = mlx.core.concatenate([activation_cache["v2"], v2], axis=-2)
+                k2 = mlx.core.concatenate([activation_cache[i]["k2"], k2], axis=-2)
+                v2 = mlx.core.concatenate([activation_cache[i]["v2"], v2], axis=-2)
             else:
                 q = (
                     layer.leaf_modules()["attn"]["query_proj"](x)
@@ -220,11 +220,12 @@ class _GPTModel(mlx.nn.Module):
                     .reshape(b, l, d - 1, layer.attn.num_heads, -1)
                     .transpose([0, 3, 1, 2, 4])
                 )
+                # cache activations for future forward passes
+                activation_cache[i]["k1"] = k1
+                activation_cache[i]["v1"] = v1
 
             # cache activations for future forward passes
-            activation_cache[i]["k1"] = k1
             activation_cache[i]["k2"] = k2
-            activation_cache[i]["v1"] = v1
             activation_cache[i]["v2"] = v2
 
             """
@@ -249,8 +250,10 @@ class _GPTModel(mlx.nn.Module):
             a = mlx.core.softmax(
                 mlx.core.concatenate(
                     [
+                        # attend to tokens in original string
                         # (B, H, L, D, E) @ (B, H, 1, E, L) => (B, H, L, D, L)
                         mlx.core.matmul(q, k1.transpose([0, 1, 2, 4, 3])) + causal_mask1,
+                        # attend to thought tokens generated so far
                         # (B, H, L, D, E) @ (B, H, L, E, T) => (B, H, L, D, T)
                         mlx.core.matmul(q, k2.transpose([0, 1, 2, 4, 3])) + causal_mask2,
                     ],
@@ -263,19 +266,22 @@ class _GPTModel(mlx.nn.Module):
             a2 = a[:, :, :, :, l:]
             # attn_out is (B, H, L, D, E)
             attn_out = (
+                # contributions of tokens in original string
                 # (B, H, L, D, L) @ (B, H, 1, L, E) => (B, H, L, D, E)
                 mlx.core.matmul(a1, v1)
+                # contributions of thought tokens generated so far
                 # (B, H, L, D, T) @ (B, H, L, T, E) => (B, H, L, D, E)
                 + mlx.core.matmul(a2, v2)
             )
             attn_out = layer.leaf_modules()["attn"]["out_proj"](
-                attn_out.transpose([0, 2, 3, 1, 4]).reshape(b, l, d, -1)
+                attn_out.transpose([0, 2, 3, 1, 4]).reshape(b, l, d, self.embed_dim)
             )
             x = x + attn_out
             x = x + layer.mlp(layer.ln2(x))
         x = self.ln(x)
         logits = self.lm_head(x)
 
+        # (B, L, D, vocab_size)
         return logits, activation_cache
 
 

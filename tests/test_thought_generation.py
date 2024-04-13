@@ -1,10 +1,105 @@
+import random
+
 import mlx.core
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.gpt_mlx import _GPTModel
 
 
+BATCH_SIZE = 2
+
+def prepare_test_inputs(
+    model: _GPTModel, config: Config, text: str, max_thought_length: int
+) -> tuple[list[int], list[list[int]]]:
+    x = model.tokenizer(
+        text,
+        padding="do_not_pad",
+        truncation=True,
+        max_length=config.model.max_length - config.max_thought_length - 2,
+        return_tensors="np",
+        return_attention_mask=False,
+    )["input_ids"][0].tolist()
+    start_thought_token = model.tokenizer(
+        "<|startofthought|>", return_tensors="np", return_attention_mask=False
+    )["input_ids"][0, 0].tolist()
+    thought_tokens = [[start_thought_token] for _ in range(len(x))]
+    if max_thought_length > 0:
+        next_tokens = [
+            [
+                random.randrange(0, len(model.tokenizer))
+                for _ in range(max_thought_length)
+            ]
+            for _ in range(len(x))
+        ]
+        thought_tokens = [thought_tokens[i] + next_tokens[i] for i in range(len(x))]
+
+    return x, thought_tokens
+
+
+def calculate_correct_logits(
+    model: _GPTModel, x: list[int], thought_tokens: list[list[int]], thought_length: int
+):
+    correct_logits = []
+    for i in range(len(x)):
+        xi = mlx.core.array([x[: i + 1] + thought_tokens[i][:thought_length]])
+        correct_logits.append(model(xi)[0, -1])
+    return mlx.core.array([correct_logits for _ in range(BATCH_SIZE)])  # add batch dimension
+
+
+def prepare_next_thought_token_input(
+    x: list[int],
+    thought_tokens: list[list[int]],
+    thought_length: int,
+    last_thought_token_only: bool,
+) -> mlx.core.array:
+    if not last_thought_token_only:
+        thoughts = [tokens[:thought_length] for tokens in thought_tokens]
+        x = mlx.core.array(x, dtype=mlx.core.uint32)
+        x = mlx.core.expand_dims(x, axis=-1)
+        thoughts = mlx.core.array(thoughts, dtype=mlx.core.uint32)
+        inputs = mlx.core.concatenate([x, thoughts], axis=-1)
+    else:
+        thoughts = [[tokens[thought_length - 1]] for tokens in thought_tokens]
+        inputs = mlx.core.array(thoughts, dtype=mlx.core.uint32)
+
+    return mlx.core.array([inputs for _ in range(BATCH_SIZE)])  # add batch dimension
+
+
+def generate_and_verify_logits(
+    model: _GPTModel,
+    x: list[int],
+    thought_tokens: list[int],
+    thought_length: int,
+    activation_cache: list[dict[str, mlx.core.array]],
+) -> list[dict[str, mlx.core.array]]:
+    correct_logits = calculate_correct_logits(model, x, thought_tokens, thought_length)
+
+    inputs = prepare_next_thought_token_input(
+        x, thought_tokens, thought_length, last_thought_token_only=(thought_length > 1)
+    )
+    logits, activation_cache = model.generate_next_thought_token(
+        inputs, thought_length, activation_cache
+    )
+    logits = logits[:, :, -1].squeeze()  # only compare logits of last thought tokens
+
+    expected_shape = (BATCH_SIZE, len(x), len(model.tokenizer))
+    assert (
+        correct_logits.shape == expected_shape
+    ), f"for thought length {thought_length}, correct logits has shape {correct_logits.shape}, expected shape {expected_shape}"
+    assert (
+        logits.shape == expected_shape
+    ), f"for thought length {thought_length}, logits has shape {logits.shape}, expected shape {expected_shape}"
+
+    assert mlx.core.allclose(
+        correct_logits, logits, atol=1e-6
+    ).item(), f"for thought length {thought_length}, logits were not close: correct logits {correct_logits} actual logits {logits}"
+
+    return activation_cache
+
+
 def test_thought_generation():
+    max_thought_length = 3
+
     config = Config(
         batch_size=4,
         max_thought_length=4,
@@ -15,42 +110,16 @@ def test_thought_generation():
             embed_dim=3 * 8,
             max_length=32,
             num_heads=3,
-            num_layers=3,
+            num_layers=1,
         ),
     )
     model = _GPTModel(config)
-    x = model.tokenizer(
-        "This is a test.",
-        padding="do_not_pad",
-        truncation=True,
-        max_length=config.model.max_length - config.max_thought_length - 2,
-        return_tensors="np",
-        return_attention_mask=False,
-    )["input_ids"][0].tolist()
-    start_thought_token = model.tokenizer(
-        "<|startofthought|>", return_tensors="np", return_attention_mask=False
-    )["input_ids"][0].tolist()
-    correct_logits = []
-    for i in range(1, len(x) + 1):
-        xi = mlx.core.array([x[:i] + start_thought_token])
-        correct_logits.append(model(xi)[0, i])
-    correct_logits = mlx.core.array([correct_logits])
-    expected_shape = (1, len(x), len(model.tokenizer))
-    assert (
-        correct_logits.shape == expected_shape
-    ), f"correct_logits has shape {correct_logits.shape}, expected shape {expected_shape}"
 
-    xp = mlx.core.array([x], dtype=mlx.core.uint32)
-    xp = mlx.core.expand_dims(xp, axis=2)
-    start_token = mlx.core.full(
-        xp.shape, model.start_thought_token_id, dtype=mlx.core.uint32
-    )
-    xp = mlx.core.concatenate([xp, start_token], axis=2)
     activation_cache = None
-    logits, activation_cache = model.generate_next_thought_token(xp, 1, activation_cache)
-    expected_shape = (1, len(x), 2, len(model.tokenizer))
-    assert logits.shape == expected_shape, f"logits has shape {logits.shape}, expected shape {expected_shape}"
-
-    logits = logits[:, :, -1]
-
-    assert mlx.core.allclose(correct_logits, logits, atol=1e-6).item(), f"logits were not close: {correct_logits} {logits}"
+    x, thought_tokens = prepare_test_inputs(
+        model, config, "This is a test.", max_thought_length
+    )
+    for t in range(1, max_thought_length + 1):
+        activation_cache = generate_and_verify_logits(
+            model, x, thought_tokens, t, activation_cache
+        )
