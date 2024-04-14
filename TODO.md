@@ -1,18 +1,18 @@
 # TODO
 
-[_] implement logits without thoughts
-[_] implement mixing head
-[_] implement logits mixing
-[_] implement computation of negative log likelihood
-[_] implement computation of reward
-[_] implement computation of policy gradient
-[_] implement overall loss
+[ ] implement logits without thoughts
+[ ] implement mixing head
+[ ] implement logits mixing
+[ ] implement computation of negative log likelihood
+[ ] implement computation of reward
+[ ] implement computation of policy gradient
+[ ] implement overall loss
 
-[_] convert MLX code to PyTorch
-[_] convert logits without thoughts to work with pretrained Huggingface model
-[_] convert thought generation to work with pretrained Huggingface model
-[_] convert hidden state generation to work with pretrained Huggingface model
-[_] convert LM head to work with pretrained Huggingface model
-[_] convert mixing head to work with pretrained Huggingface model
+[ ] convert MLX code to PyTorch
+[ ] convert logits without thoughts to work with pretrained Huggingface model
+[ ] convert thought generation to work with pretrained Huggingface model
+[ ] convert hidden state generation to work with pretrained Huggingface model
+[ ] convert LM head to work with pretrained Huggingface model
+[ ] convert mixing head to work with pretrained Huggingface model
 
-[_] add type annotations to triton code
+[ ] add type annotations to triton code
