@@ -1,5 +1,6 @@
 # TODO
 
+## Basic algorithm
 - [ ] implement logits without thoughts
 - [ ] implement mixing head
 - [ ] implement logits mixing
@@ -8,6 +9,7 @@
 - [ ] implement computation of policy gradient
 - [ ] implement overall loss
 
+## Using a pretrained model
 - [ ] convert MLX code to PyTorch
 - [ ] convert logits without thoughts to work with pretrained Huggingface model
 - [ ] convert thought generation to work with pretrained Huggingface model
@@ -15,4 +17,5 @@
 - [ ] convert LM head to work with pretrained Huggingface model
 - [ ] convert mixing head to work with pretrained Huggingface model
 
+## Housekeeping
 - [ ] add type annotations to triton code
