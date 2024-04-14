@@ -1,13 +1,14 @@
 # TODO
 
 ## Basic algorithm
-- [ ] implement logits without thoughts
+- [x] implement logits without thoughts
 - [ ] implement mixing head
 - [ ] implement logits mixing
 - [ ] implement computation of negative log likelihood
 - [ ] implement computation of reward
 - [ ] implement computation of policy gradient
 - [ ] implement overall loss
+- [ ] add gradient weighting
 
 ## Using a pretrained model
 - [ ] convert MLX code to PyTorch

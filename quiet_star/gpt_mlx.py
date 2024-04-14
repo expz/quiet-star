@@ -250,32 +250,20 @@ class _GPTModel(mlx.nn.Module):
             self.lookahead_indices[:l],
             axis=1,
         )
-        print(
-            "lookahead indices:", self.lookahead_indices.shape, self.lookahead_indices
-        )
-        print("lookahead:", lookahead.shape, lookahead)
 
-        print("x:", x.shape, x)
         x = mlx.core.expand_dims(x[:, : self.max_length - n], axis=2)
         x = mlx.core.concatenate([x, start_token], axis=2)
         next_tokens = x
-        print("x:", x.shape)
 
         activation_cache = None
         for t in range(1, self.thought_length + 1):
             logits, activation_cache = self.generate_next_thought_token(
                 next_tokens, t, activation_cache
             )
-            print("logits:", logits.shape)
             next_tokens = self.sample_next_tokens(logits[:, :, -1])
             next_tokens = mlx.core.expand_dims(next_tokens, axis=-1)
-            print("x:", x.shape)
-            print("next_tokens:", next_tokens.shape)
             x = mlx.core.concatenate([x, next_tokens], axis=-1)
 
-        print("x:", x.shape)
-        print("end_token:", end_token.shape)
-        print("lookahead:", lookahead.shape)
         x = mlx.core.concatenate([x, end_token, lookahead], axis=-1)
 
         return x
@@ -439,6 +427,20 @@ class GPTModel(MLXModule):
         )
 
         return loss
+
+    @classmethod
+    def forward_pass(
+        cls, model: _GPTModel, inputs: mlx.core.array, targets: mlx.core.array
+    ) -> mlx.core.array:
+        logits, h = model(inputs, return_hidden_state=True)
+        row = mlx.core.arange(0, model.lookahead_tokens, dtype=mlx.core.uint32).reshape(
+            1, -1
+        )
+        offsets = mlx.core.arange(
+            0, h.shape[-2] - model.lookahead_tokens + 1, dtype=mlx.core.uint32
+        ).reshape(-1, 1)
+        h = mlx.core.take(h, indices=row + offsets, axis=1)
+        raise NotImplementedError("forward pass not completely implemented")
 
     def training_step(self, batch: dict[str, mlx.core.array], batch_idx: int) -> float:
         x = batch["input_ids"][:, :-1]

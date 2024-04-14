@@ -5,8 +5,6 @@ import mlx.core
 from quiet_star.config import Config, ModelConfig
 from quiet_star.gpt_mlx import _GPTModel
 
-BATCH_SIZE = 2
-
 
 def tokenize(model: _GPTModel, config: Config, text: str) -> list[int]:
     return model.tokenizer(
@@ -68,7 +66,7 @@ def extract_correct_hidden_states(config: Config, h1: mlx.core.array) -> mlx.cor
 
 def test_hidden_states() -> None:
     config = Config(
-        batch_size=4,
+        batch_size=2,
         lookahead_tokens=3,
         thought_length=4,
         model=ModelConfig(
@@ -85,7 +83,7 @@ def test_hidden_states() -> None:
 
     text = "This is a test."
     l1, l2 = [], []
-    for _ in range(BATCH_SIZE):
+    for _ in range(config.batch_size):
         i1, i2 = prepare_test_inputs(
             model, config, text, config.thought_length, config.lookahead_tokens
         )
@@ -96,12 +94,12 @@ def test_hidden_states() -> None:
     x2 = mlx.core.array(l2, dtype=mlx.core.uint32)
 
     expected_x1_shape = (
-        BATCH_SIZE,
+        config.batch_size,
         x1.shape[1],
         x1.shape[1] + config.thought_length + 2,
     )
     expected_x2_shape = (
-        BATCH_SIZE,
+        config.batch_size,
         x2.shape[1],
         1 + config.thought_length + 2 + config.lookahead_tokens,
     )
