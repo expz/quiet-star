@@ -47,7 +47,7 @@ class SelfAttentionBlock(mlx.nn.Module):
         Do layer normalization before attention/MLP according to
         https://arxiv.org/pdf/2002.04745.pdf
         """
-        b, t, e = x.shape
+        t = x.shape[-2]
 
         x = self.ln1(x)
         x = x + self.attn(x, x, x, self.mask[:, :, :t, :t])
@@ -64,7 +64,8 @@ class _GPTModel(mlx.nn.Module):
         self.embed_dim = model_config.embed_dim
         self.num_heads = model_config.num_heads
         self.max_length = model_config.max_length
-        self.max_thought_length = config.max_thought_length
+        self.thought_length = config.thought_length
+        self.lookahead_tokens = config.lookahead_tokens
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_config.model_name)
 
@@ -111,38 +112,175 @@ class _GPTModel(mlx.nn.Module):
         # do not reverse equality or initial loss will increase 10-fold
         self.tok_emb.weight = self.lm_head.weight
 
-    def __call__(self, x: mlx.core.array) -> mlx.core.array:
+        self.lookahead_indices = mlx.core.array(
+            [
+                list(range(i, i + self.lookahead_tokens))
+                for i in range(1, self.max_length + 1)
+            ]
+        )
+
+    def __call__(
+        self, x: mlx.core.array, return_hidden_state: bool = False
+    ) -> mlx.core.array:
         token_embeddings = self.tok_emb(x)
         position_embeddings = self.pos_emb(
-            mlx.core.arange(0, token_embeddings.shape[1], dtype=mlx.core.uint32)
+            mlx.core.arange(0, token_embeddings.shape[-2], dtype=mlx.core.uint32)
         )
 
         x = self.drop(token_embeddings + position_embeddings)
         for layer in self.layers:
             x = layer(x)
-        x = self.ln(x)
-        logits = self.lm_head(x)
+        h = self.ln(x)
+        logits = self.lm_head(h)
 
+        if return_hidden_state:
+            return logits, h
         return logits
 
-    def sample_next_tokens(self, logits: mlx.core.array) -> mlx.core.array:
-        pass
+    def hidden_states(self, x: mlx.core.array) -> mlx.core.array:
+        # x is (B, L, M = 1 + T + 2 + D)
+        b, l, m = x.shape
+
+        causal_mask1 = mlx.core.triu(
+            mlx.core.full((l, l), float("-inf"), dtype=x.dtype),
+            k=1,
+        )
+        causal_mask1 = mlx.core.expand_dims(causal_mask1, (0, 1, 3))
+        causal_mask2 = mlx.core.triu(
+            mlx.core.full((m, m - 1), float("-inf"), dtype=x.dtype),
+            k=0,
+        )
+        causal_mask2 = mlx.core.expand_dims(causal_mask2, (0, 1, 2))
+
+        token_embeddings = self.tok_emb(x)
+        row = mlx.core.arange(0, m, dtype=mlx.core.uint32).reshape(1, m)
+        offset = mlx.core.arange(0, l, dtype=mlx.core.uint32).reshape(l, 1)
+        pos = (row + offset).reshape(1, l, m)
+        position_embeddings = self.pos_emb(pos)
+
+        x = self.drop(token_embeddings + position_embeddings)
+        for layer in self.layers:
+            x = layer.ln1(x)
+            q = (
+                layer.leaf_modules()["attn"]["query_proj"](x)
+                .reshape(b, l, m, layer.attn.num_heads, -1)
+                .transpose([0, 3, 1, 2, 4])
+            )
+            k1 = (
+                layer.leaf_modules()["attn"]["key_proj"](x[:, :, 0])
+                .reshape(b, l, 1, layer.attn.num_heads, -1)
+                .transpose([0, 3, 2, 1, 4])
+            )
+            k2 = (
+                layer.leaf_modules()["attn"]["key_proj"](x[:, :, 1:])
+                .reshape(b, l, m - 1, layer.attn.num_heads, -1)
+                .transpose([0, 3, 1, 2, 4])
+            )
+            v1 = (
+                layer.leaf_modules()["attn"]["value_proj"](x[:, :, 0])
+                .reshape(b, l, 1, layer.attn.num_heads, -1)
+                .transpose([0, 3, 2, 1, 4])
+            )
+            v2 = (
+                layer.leaf_modules()["attn"]["value_proj"](x[:, :, 1:])
+                .reshape(b, l, m - 1, layer.attn.num_heads, -1)
+                .transpose([0, 3, 1, 2, 4])
+            )
+            a = mlx.core.softmax(
+                mlx.core.concatenate(
+                    [
+                        # attend to tokens in original string
+                        # (B, H, L, M, E) @ (B, H, 1, E, L) => (B, H, L, M, L)
+                        mlx.core.matmul(q, k1.transpose([0, 1, 2, 4, 3]))
+                        + causal_mask1,
+                        # attend to thought and lookahead tokens
+                        # (B, H, L, M, E) @ (B, H, L, E, M - 1) => (B, H, L, M, M - 1)
+                        mlx.core.matmul(q, k2.transpose([0, 1, 2, 4, 3]))
+                        + causal_mask2,
+                    ],
+                    axis=-1,
+                )
+                / math.sqrt(self.embed_dim / self.num_heads),
+                axis=-1,
+            )
+            a1 = a[:, :, :, :, :l]
+            a2 = a[:, :, :, :, l:]
+            # attn_out is (B, H, L, D, E)
+            attn_out = (
+                # contributions of tokens in original string
+                # (B, H, L, M, L) @ (B, H, 1, L, E) => (B, H, L, M, E)
+                mlx.core.matmul(a1, v1)
+                # contributions of thought and lookahead tokens
+                # (B, H, L, M, M - 1) @ (B, H, L, M - 1, E) => (B, H, L, M, E)
+                + mlx.core.matmul(a2, v2)
+            )
+            attn_out = layer.leaf_modules()["attn"]["out_proj"](
+                attn_out.transpose([0, 2, 3, 1, 4]).reshape(b, l, m, self.embed_dim)
+            )
+            x = x + attn_out
+            x = x + layer.mlp(layer.ln2(x))
+        # (B, L, D, E)
+        h = self.ln(x)
+
+        # only keep the hidden states which we care about
+        h = h[:, :, -(self.lookahead_tokens + 1) : -1]
+
+        # drop the states where we don't have enough lookahead tokens
+        return h[:, :l - (self.lookahead_tokens - 1)]
+
+    def sample_next_tokens(
+        self, logits: mlx.core.array, temp: float = 1.0
+    ) -> mlx.core.array:
+        logits = logits / temp
+        return mlx.core.random.categorical(logits)
 
     def generate_thoughts(self, x: mlx.core.array) -> mlx.core.array:
-        b, l, e = x.shape
+        b, l = x.shape
+        n = self.thought_length + 2 + self.lookahead_tokens
 
-        x = mlx.core.expand_dims(x[:, :self.max_length - self.max_thought_length - 2], axis=2)
         start_token = mlx.core.full(
-            (b, x.shape[1], 1, e), self.start_thought_token_id, dtype=mlx.core.uint32
+            (b, l, 1), self.start_thought_token_id, dtype=mlx.core.uint32
         )
+        end_token = mlx.core.full(
+            (b, l, 1), self.end_thought_token_id, dtype=mlx.core.uint32
+        )
+        padding = mlx.core.full(
+            (b, n), self.tokenizer.pad_token_id, dtype=mlx.core.uint32
+        )
+        lookahead = mlx.core.take(
+            mlx.core.concatenate([x, padding], axis=1),
+            self.lookahead_indices[:l],
+            axis=1,
+        )
+        print(
+            "lookahead indices:", self.lookahead_indices.shape, self.lookahead_indices
+        )
+        print("lookahead:", lookahead.shape, lookahead)
+
+        print("x:", x.shape, x)
+        x = mlx.core.expand_dims(x[:, : self.max_length - n], axis=2)
         x = mlx.core.concatenate([x, start_token], axis=2)
+        next_tokens = x
+        print("x:", x.shape)
 
         activation_cache = None
-        for t in range(1, self.max_thought_length + 1):
+        for t in range(1, self.thought_length + 1):
             logits, activation_cache = self.generate_next_thought_token(
-                x, t, activation_cache
+                next_tokens, t, activation_cache
             )
-            x = self.sample_next_tokens(logits)
+            print("logits:", logits.shape)
+            next_tokens = self.sample_next_tokens(logits[:, :, -1])
+            next_tokens = mlx.core.expand_dims(next_tokens, axis=-1)
+            print("x:", x.shape)
+            print("next_tokens:", next_tokens.shape)
+            x = mlx.core.concatenate([x, next_tokens], axis=-1)
+
+        print("x:", x.shape)
+        print("end_token:", end_token.shape)
+        print("lookahead:", lookahead.shape)
+        x = mlx.core.concatenate([x, end_token, lookahead], axis=-1)
+
+        return x
 
     def generate_next_thought_token(
         self,
@@ -164,10 +302,12 @@ class _GPTModel(mlx.nn.Module):
             mlx.core.full((t + 1, t + 1), float("-inf"), dtype=x.dtype),
             k=1,
         )
-        causal_mask2 = mlx.core.expand_dims(causal_mask2[t - d + 1:, 1:], (0, 1, 2))
+        causal_mask2 = mlx.core.expand_dims(causal_mask2[t - d + 1 :, 1:], (0, 1, 2))
 
         rows = mlx.core.arange(0, d, dtype=mlx.core.uint32).reshape(1, d)
-        row_offsets = mlx.core.arange(t - d + 1, l + t - d + 1, dtype=mlx.core.uint32).reshape(l, 1)
+        row_offsets = mlx.core.arange(
+            t - d + 1, l + t - d + 1, dtype=mlx.core.uint32
+        ).reshape(l, 1)
         position_embeddings = self.pos_emb(rows + row_offsets)
         token_embeddings = self.tok_emb(x)
 
@@ -228,34 +368,17 @@ class _GPTModel(mlx.nn.Module):
             activation_cache[i]["k2"] = k2
             activation_cache[i]["v2"] = v2
 
-            """
-            the --
-            cat --
-            sat --
-            ...
-                the cat sat
-            the
-            ---
-                the cat sat
-            cat
-            ---
-
-                ---
-            the
-            ---
-                ---
-            cat -inf
-            ---
-            """
             a = mlx.core.softmax(
                 mlx.core.concatenate(
                     [
                         # attend to tokens in original string
                         # (B, H, L, D, E) @ (B, H, 1, E, L) => (B, H, L, D, L)
-                        mlx.core.matmul(q, k1.transpose([0, 1, 2, 4, 3])) + causal_mask1,
+                        mlx.core.matmul(q, k1.transpose([0, 1, 2, 4, 3]))
+                        + causal_mask1,
                         # attend to thought tokens generated so far
                         # (B, H, L, D, E) @ (B, H, L, E, T) => (B, H, L, D, T)
-                        mlx.core.matmul(q, k2.transpose([0, 1, 2, 4, 3])) + causal_mask2,
+                        mlx.core.matmul(q, k2.transpose([0, 1, 2, 4, 3]))
+                        + causal_mask2,
                     ],
                     axis=-1,
                 )

@@ -15,7 +15,7 @@ def prepare_test_inputs(
         text,
         padding="do_not_pad",
         truncation=True,
-        max_length=config.model.max_length - config.max_thought_length - 2,
+        max_length=config.model.max_length - config.thought_length - 2,
         return_tensors="np",
         return_attention_mask=False,
     )["input_ids"][0].tolist()
@@ -102,7 +102,7 @@ def test_thought_generation():
 
     config = Config(
         batch_size=4,
-        max_thought_length=4,
+        thought_length=4,
         model=ModelConfig(
             attn_type="mlx",
             dropout_attn=0.0,
@@ -110,7 +110,7 @@ def test_thought_generation():
             embed_dim=3 * 8,
             max_length=32,
             num_heads=3,
-            num_layers=1,
+            num_layers=3,
         ),
     )
     model = _GPTModel(config)

@@ -24,9 +24,10 @@ class Config:
     betas: Tuple[float, float] = (0.9, 0.999)
     epochs: int = 2
     learning_rate: float = 1e-5
+    lookahead_tokens: int = 4
     max_samples: int = 2048
-    max_thought_length: int = 12
     seed: int = 123
+    thought_length: int = 12
     test_pct: float = 0.125
     weight_decay: float = 0.01
 
