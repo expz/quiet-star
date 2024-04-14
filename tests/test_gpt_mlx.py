@@ -5,7 +5,6 @@ import mlx.core
 from quiet_star.config import Config, ModelConfig
 from quiet_star.gpt_mlx import _GPTModel
 
-
 BATCH_SIZE = 2
 
 
@@ -64,10 +63,10 @@ def extract_correct_hidden_states(config: Config, h1: mlx.core.array) -> mlx.cor
     h1 = mlx.core.array(h1)
 
     # drop the states where we don't have enough lookahead tokens
-    return h1[:, :l - (config.lookahead_tokens - 1)]
+    return h1[:, : l - (config.lookahead_tokens - 1)]
 
 
-def test_hidden_states():
+def test_hidden_states() -> None:
     config = Config(
         batch_size=4,
         lookahead_tokens=3,
@@ -85,16 +84,16 @@ def test_hidden_states():
     model = _GPTModel(config)
 
     text = "This is a test."
-    x1, x2 = [], []
+    l1, l2 = [], []
     for _ in range(BATCH_SIZE):
         i1, i2 = prepare_test_inputs(
             model, config, text, config.thought_length, config.lookahead_tokens
         )
-        x1.append(i1)
-        x2.append(i2)
+        l1.append(i1)
+        l2.append(i2)
 
-    x1 = mlx.core.array(x1, dtype=mlx.core.uint32)
-    x2 = mlx.core.array(x2, dtype=mlx.core.uint32)
+    x1 = mlx.core.array(l1, dtype=mlx.core.uint32)
+    x2 = mlx.core.array(l2, dtype=mlx.core.uint32)
 
     expected_x1_shape = (
         BATCH_SIZE,

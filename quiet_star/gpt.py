@@ -1,15 +1,13 @@
+import lightning
+import lightning.pytorch
 import torch
 import torch.nn
+import torch.utils.data
 from torch.nn import functional as F
-import lightning
-
 from transformers import AutoTokenizer
 
-import lightning.pytorch
-import torch.utils.data
-
-from quiet_star.config import Config, ModelConfig
 from quiet_star.attention_torch import TorchCausalSelfAttention
+from quiet_star.config import Config, ModelConfig
 
 try:
     from quiet_star.attention_triton import TritonCausalSelfAttention
@@ -172,7 +170,7 @@ class GPTModel(lightning.LightningModule):
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> torch.optim.Optimizer:
         decay = []
         no_decay = []
         for name, params in self.named_parameters():

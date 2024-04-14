@@ -1,7 +1,7 @@
 import abc
 
 import datasets
-import mlx.core
+import mlx.core  # type: ignore
 import mlx.nn
 import mlx.optimizers
 import mlx.utils
@@ -15,7 +15,7 @@ class MLXModule(abc.ABC):
     def __call__(self, x: mlx.core.array) -> mlx.core.array:
         return self.model(x)
 
-    def compile(self):
+    def compile(self) -> None:
         mlx.core.eval(self.model)
 
         optimizer = self.configure_optimizers()

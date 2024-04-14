@@ -1,4 +1,4 @@
-import mlx.core
+import mlx.core  # type: ignore
 
 
 def mlx_dtype(dtype: str) -> mlx.core.Dtype:

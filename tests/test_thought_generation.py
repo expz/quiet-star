@@ -5,8 +5,8 @@ import mlx.core
 from quiet_star.config import Config, ModelConfig
 from quiet_star.gpt_mlx import _GPTModel
 
-
 BATCH_SIZE = 2
+
 
 def prepare_test_inputs(
     model: _GPTModel, config: Config, text: str, max_thought_length: int
@@ -38,12 +38,14 @@ def prepare_test_inputs(
 
 def calculate_correct_logits(
     model: _GPTModel, x: list[int], thought_tokens: list[list[int]], thought_length: int
-):
+) -> mlx.core.array:
     correct_logits = []
     for i in range(len(x)):
         xi = mlx.core.array([x[: i + 1] + thought_tokens[i][:thought_length]])
         correct_logits.append(model(xi)[0, -1])
-    return mlx.core.array([correct_logits for _ in range(BATCH_SIZE)])  # add batch dimension
+    return mlx.core.array(
+        [correct_logits for _ in range(BATCH_SIZE)]
+    )  # add batch dimension
 
 
 def prepare_next_thought_token_input(
@@ -68,9 +70,9 @@ def prepare_next_thought_token_input(
 def generate_and_verify_logits(
     model: _GPTModel,
     x: list[int],
-    thought_tokens: list[int],
+    thought_tokens: list[list[int]],
     thought_length: int,
-    activation_cache: list[dict[str, mlx.core.array]],
+    activation_cache: list[dict[str, mlx.core.array]] | None,
 ) -> list[dict[str, mlx.core.array]]:
     correct_logits = calculate_correct_logits(model, x, thought_tokens, thought_length)
 
@@ -94,10 +96,12 @@ def generate_and_verify_logits(
         correct_logits, logits, atol=1e-6
     ).item(), f"for thought length {thought_length}, logits were not close: correct logits {correct_logits} actual logits {logits}"
 
+    assert activation_cache is not None
+
     return activation_cache
 
 
-def test_thought_generation():
+def test_thought_generation() -> None:
     max_thought_length = 3
 
     config = Config(

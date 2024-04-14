@@ -28,9 +28,8 @@ import math
 
 import torch
 import torch.nn as nn
-
-import triton
-import triton.language as tl
+import triton  # type: ignore
+import triton.language as tl  # type: ignore
 
 
 @triton.jit
@@ -757,7 +756,9 @@ class TritonCausalSelfAttention(nn.Module):
 
         self.num_heads = num_heads
 
-    def forward(self, x: torch.Tensor, padding: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, padding: torch.Tensor | None = None
+    ) -> torch.Tensor:
         b, t, c = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)

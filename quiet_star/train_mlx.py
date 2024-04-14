@@ -1,7 +1,7 @@
 from functools import partial
-import mlx.core.random
-import mlx.nn
 
+import mlx.core.random  # type: ignore
+import mlx.nn
 import numpy as np
 
 from quiet_star.config import Config

@@ -1,16 +1,14 @@
 import math
 
-import mlx.core
+import mlx.core  # type: ignore
 import mlx.nn
 import mlx.optimizers
 import mlx.utils
-
 from transformers import AutoTokenizer
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.mlx import MLXModule
 from quiet_star.utils import mlx_dtype
-
 
 START_THOUGHT_TOKEN = "<|startofthought|>"
 END_THOUGHT_TOKEN = "<|endofthought|>"
@@ -226,7 +224,7 @@ class _GPTModel(mlx.nn.Module):
         h = h[:, :, -(self.lookahead_tokens + 1) : -1]
 
         # drop the states where we don't have enough lookahead tokens
-        return h[:, :l - (self.lookahead_tokens - 1)]
+        return h[:, : l - (self.lookahead_tokens - 1)]
 
     def sample_next_tokens(
         self, logits: mlx.core.array, temp: float = 1.0
@@ -460,7 +458,7 @@ class GPTModel(MLXModule):
         loss = self.calculate_loss(logits, y)
         return loss.tolist()
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> mlx.optimizers.Optimizer:
         return mlx.optimizers.AdamW(
             learning_rate=self.learning_rate,
             betas=self.betas,

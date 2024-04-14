@@ -4,7 +4,7 @@ from quiet_star.config import Config, ModelConfig
 from quiet_star.train import train_gpt
 
 
-def main():
+def main() -> None:
     config = Config(
         batch_size=4,
         epochs=2,

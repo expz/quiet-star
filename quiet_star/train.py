@@ -1,7 +1,7 @@
 import lightning.pytorch
-from lightning.pytorch.callbacks import RichProgressBar
 import torch
 import torch.utils.data
+from lightning.pytorch.callbacks import RichProgressBar
 
 from quiet_star.config import Config
 from quiet_star.dataset import get_open_web_math_dataset

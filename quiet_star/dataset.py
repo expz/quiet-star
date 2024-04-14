@@ -4,9 +4,10 @@ import random
 from typing import Callable
 
 import datasets
+import numpy as np
+import torch.utils.data
 from huggingface_hub import HfFileSystem
 from transformers import AutoTokenizer
-import torch.utils.data
 
 DATASET_LOCAL_PATH = "data/open-web-math"
 
@@ -57,7 +58,7 @@ def process_batch(
     return _process
 
 
-def to_mlx(samples: dict[str, list]) -> dict[str, list]:
+def to_mlx(samples: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     return {"input_ids": samples["input_ids"].astype("uint32")}
 
 
@@ -65,7 +66,7 @@ def get_open_web_math_dataset(
     tokenizer: AutoTokenizer,
     max_length: int,
     file_count: int = 1,
-    max_samples: int | None = None,
+    max_samples: int = 2048,
     test_pct: float = 0.125,
     tensor_type: str = "torch",
     use_local_cache: bool = True,
