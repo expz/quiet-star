@@ -2,9 +2,9 @@
 
 ## Basic algorithm
 - [x] implement logits without thoughts
-- [ ] implement mixing head
-- [ ] implement logits mixing
-- [ ] implement computation of negative log likelihood
+- [x] implement mixing head
+- [x] implement logits mixing
+- [x] implement computation of negative log likelihood
 - [ ] implement computation of reward
 - [ ] implement computation of policy gradient
 - [ ] implement overall loss

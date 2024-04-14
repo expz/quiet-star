@@ -117,6 +117,13 @@ class _GPTModel(mlx.nn.Module):
             ]
         )
 
+        self.mixing_mlp = mlx.nn.Sequential(
+            mlx.nn.Linear(2 * model_config.embed_dim, 2 * model_config.embed_dim),
+            mlx.nn.ReLU(),
+            mlx.nn.Linear(2 * model_config.embed_dim, 1),
+            mlx.nn.Sigmoid(),
+        )
+
     def __call__(
         self, x: mlx.core.array, return_hidden_state: bool = False
     ) -> mlx.core.array:
@@ -393,6 +400,13 @@ class _GPTModel(mlx.nn.Module):
         # (B, L, D, vocab_size)
         return logits, activation_cache
 
+    def mixing_head(
+        self, h: mlx.core.array, h_thought: mlx.core.array
+    ) -> mlx.core.array:
+        x = mlx.core.concatenate([h, h_thought], axis=-1)
+        w = self.mixing_mlp(x)
+        return w
+
 
 class GPTModel(MLXModule):
     def __init__(self, config: Config):
@@ -414,33 +428,50 @@ class GPTModel(MLXModule):
 
     @staticmethod
     def calculate_loss(
-        logits: mlx.core.array, targets: mlx.core.array
+        logits: mlx.core.array, targets: mlx.core.array, reduce: bool = True
     ) -> mlx.core.array:
-        b, t, _ = logits.shape
-
+        v = logits.shape[-1]
         # Reshape to calculate cross entropy; the 2D version runs at 50% of the speed of the below version
         loss = mlx.nn.losses.cross_entropy(
-            logits.reshape(b * t, -1),
+            logits.reshape(-1, v),
             targets.reshape(-1),
-            reduction="mean",
+            axis=-1,
+            reduction="none",
             # ignore_index=self.tokenizer.pad_token_id,
-        )
-
-        return loss
+        ).reshape(*targets.shape)
+        if reduce:
+            return mlx.core.mean(loss)
+        return mlx.core.sum(loss, axis=-1) / loss.shape[-1]
 
     @classmethod
     def forward_pass(
         cls, model: _GPTModel, inputs: mlx.core.array, targets: mlx.core.array
     ) -> mlx.core.array:
-        logits, h = model(inputs, return_hidden_state=True)
         row = mlx.core.arange(0, model.lookahead_tokens, dtype=mlx.core.uint32).reshape(
             1, -1
         )
         offsets = mlx.core.arange(
-            0, h.shape[-2] - model.lookahead_tokens + 1, dtype=mlx.core.uint32
+            0, inputs.shape[-1] - model.lookahead_tokens + 1, dtype=mlx.core.uint32
         ).reshape(-1, 1)
-        h = mlx.core.take(h, indices=row + offsets, axis=1)
+        indices = row + offsets
+
+        targets = mlx.core.take(targets, indices=indices, axis=1)
+
+        logits, h = model(inputs, return_hidden_state=True)
+        h = mlx.core.take(h, indices=indices, axis=1)
+        logits = mlx.core.take(logits, indices=indices, axis=1)
+
+        x = model.generate_thoughts(inputs)
+        h_thought = model.hidden_states(x)
+        logits_thought = model.lm_head(h_thought)
+
+        w = model.mixing_head(h, h_thought)
+
+        y = w * logits + (1.0 - w) * logits_thought
+
+        loss = cls.calculate_loss(y, targets, reduce=False)
         raise NotImplementedError("forward pass not completely implemented")
+        return loss
 
     def training_step(self, batch: dict[str, mlx.core.array], batch_idx: int) -> float:
         x = batch["input_ids"][:, :-1]
