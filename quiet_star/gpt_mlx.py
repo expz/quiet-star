@@ -111,13 +111,6 @@ class _GPTModel(mlx.nn.Module):
         # do not reverse equality or initial loss will increase 10-fold
         self.tok_emb.weight = self.lm_head.weight
 
-        self.lookahead_indices = mlx.core.array(
-            [
-                list(range(i, i + self.lookahead_tokens))
-                for i in range(1, self.max_length + 1)
-            ]
-        )
-
         self.mixing_mlp = mlx.nn.Sequential(
             mlx.nn.Linear(2 * model_config.embed_dim, 2 * model_config.embed_dim),
             mlx.nn.ReLU(),
@@ -240,6 +233,22 @@ class _GPTModel(mlx.nn.Module):
         logits = logits / temp
         return mlx.core.random.categorical(logits)
 
+    @staticmethod
+    def shift_and_stack(
+        x: mlx.core.array, rows: int, cols: int, col_offset: int = 0
+    ) -> mlx.core.array:
+        y = mlx.core.stack(
+            [x[:, i : i + cols] for i in range(col_offset, rows + col_offset)], axis=1
+        )
+
+        # row_vec = mlx.core.arange(0, cols, dtype=mlx.core.uint32).reshape(1, -1)
+        # offset_vec = mlx.core.arange(col_offset, rows + col_offset, dtype=mlx.core.uint32).reshape(-1, 1)
+        # indices = row_vec + offset_vec
+        # yp = mlx.core.take(x, indices=indices, axis=1)
+        # assert mlx.core.allclose(y, yp, atol=1e-7).item()
+
+        return y
+
     def generate_thoughts(
         self, x: mlx.core.array
     ) -> tuple[mlx.core.array, mlx.core.array]:
@@ -259,10 +268,11 @@ class _GPTModel(mlx.nn.Module):
         padding = mlx.core.full(
             (b, n), self.tokenizer.pad_token_id, dtype=mlx.core.uint32
         )
-        lookahead = mlx.core.take(
+        lookahead = self.shift_and_stack(
             mlx.core.concatenate([x, padding], axis=1),
-            self.lookahead_indices[: min(l, self.max_length - n)],
-            axis=1,
+            rows=min(l, self.max_length - n),
+            cols=self.lookahead_tokens,
+            col_offset=1,
         )
 
         x = mlx.core.expand_dims(x[:, : self.max_length - n], axis=2)
@@ -474,37 +484,31 @@ class GPTModel(MLXModule):
         a = model.lookahead_tokens
         l = inputs.shape[1]
         lp = min(l, model.max_length - (t + 2 + a))
-        lpp = min(l, model.max_length - (t + 2 + a) - (a - 1))
+        lpp = min(l - (a - 1), model.max_length - (t + 2 + a) - (a - 1))
         e = model.embed_dim
         v = len(model.tokenizer)
 
         assert_shape(inputs, (b, l))
         assert_shape(targets, (b, l))
 
-        row = mlx.core.arange(0, model.lookahead_tokens, dtype=mlx.core.uint32).reshape(
-            1, -1
-        )
-        offset_max = (
+        offset_max = min(
+            inputs.shape[-1] - (model.lookahead_tokens - 1),
             model.max_length
             - (model.thought_length + 2 + model.lookahead_tokens)
-            - (model.lookahead_tokens - 1)
+            - (model.lookahead_tokens - 1),
         )
-        offsets = mlx.core.arange(
-            0, min(inputs.shape[-1], offset_max), dtype=mlx.core.uint32
-        ).reshape(-1, 1)
-        indices = row + offsets
 
         # Calculate logits without thoughts
-        targets = mlx.core.take(targets, indices=indices, axis=1)
+        targets = model.shift_and_stack(targets, offset_max, model.lookahead_tokens)
         assert_shape(targets, (b, lpp, a))
 
         logits, h = model(inputs, return_hidden_state=True)
         assert_shape(logits, (b, l, v))
         assert_shape(h, (b, l, e))
-        h = mlx.core.take(h, indices=indices, axis=1)
-        logits = mlx.core.take(logits, indices=indices, axis=1)
-        assert_shape(logits, (b, lpp, a, v))
+        h = model.shift_and_stack(h, offset_max, model.lookahead_tokens)
+        logits = model.shift_and_stack(logits, offset_max, model.lookahead_tokens)
         assert_shape(h, (b, lpp, a, e))
+        assert_shape(logits, (b, lpp, a, v))
 
         # Calculate logits with thoughts
         inputs = mlx.core.repeat(inputs, repeats=model.num_thoughts, axis=0)
