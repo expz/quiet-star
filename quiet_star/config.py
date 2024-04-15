@@ -24,6 +24,7 @@ class Config:
     learning_rate: float = 1e-5
     lookahead_tokens: int = 4
     max_samples: int = 2048
+    num_thoughts: int = 2
     seed: int = 123
     thought_length: int = 12
     test_pct: float = 0.125

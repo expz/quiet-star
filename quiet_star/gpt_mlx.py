@@ -62,6 +62,7 @@ class _GPTModel(mlx.nn.Module):
         self.embed_dim = model_config.embed_dim
         self.num_heads = model_config.num_heads
         self.max_length = model_config.max_length
+        self.num_thoughts = config.num_thoughts
         self.thought_length = config.thought_length
         self.lookahead_tokens = config.lookahead_tokens
 
@@ -239,7 +240,9 @@ class _GPTModel(mlx.nn.Module):
         logits = logits / temp
         return mlx.core.random.categorical(logits)
 
-    def generate_thoughts(self, x: mlx.core.array) -> mlx.core.array:
+    def generate_thoughts(
+        self, x: mlx.core.array
+    ) -> tuple[mlx.core.array, mlx.core.array]:
         b, l = x.shape
         n = self.thought_length + 2 + self.lookahead_tokens
 
@@ -263,24 +266,35 @@ class _GPTModel(mlx.nn.Module):
         next_tokens = x
 
         activation_cache = None
+        thought_logits = None
         for t in range(1, self.thought_length + 1):
             logits, activation_cache = self.generate_next_thought_token(
                 next_tokens, t, activation_cache
             )
+            if t == 1:
+                thought_logits = logits[:, :, -1:]
+            else:
+                thought_logits = mlx.core.concatenate(
+                    [thought_logits, logits[:, :, -1:]], axis=2
+                )
             next_tokens = self.sample_next_tokens(logits[:, :, -1])
             next_tokens = mlx.core.expand_dims(next_tokens, axis=-1)
             x = mlx.core.concatenate([x, next_tokens], axis=-1)
 
+        # (B, L, 1 + T + 2 + A)
         x = mlx.core.concatenate([x, end_token, lookahead], axis=-1)
 
-        return x
+        # (B, L, T)
+        assert thought_logits is not None
+
+        return thought_logits, x
 
     def generate_next_thought_token(
         self,
         x: mlx.core.array,
         t: int,
         activation_cache: list[dict[str, mlx.core.array]] | None = None,
-    ) -> mlx.core.array:
+    ) -> tuple[mlx.core.array, list[dict[str, mlx.core.array]]]:
         b, l, d = x.shape
 
         if activation_cache is None:
@@ -397,6 +411,8 @@ class _GPTModel(mlx.nn.Module):
         x = self.ln(x)
         logits = self.lm_head(x)
 
+        assert activation_cache is not None
+
         # (B, L, D, vocab_size)
         return logits, activation_cache
 
@@ -441,12 +457,23 @@ class GPTModel(MLXModule):
         ).reshape(*targets.shape)
         if reduce:
             return mlx.core.mean(loss)
-        return mlx.core.sum(loss, axis=-1) / loss.shape[-1]
+        return loss
 
     @classmethod
     def forward_pass(
         cls, model: _GPTModel, inputs: mlx.core.array, targets: mlx.core.array
     ) -> mlx.core.array:
+        b = inputs.shape[0]
+        n = model.num_thoughts
+        l = inputs.shape[1]
+        t = model.thought_length
+        a = model.lookahead_tokens
+        e = model.embed_dim
+        v = len(model.tokenizer)
+
+        assert inputs.shape == (b, l)
+        assert targets.shape == (b, l)
+
         row = mlx.core.arange(0, model.lookahead_tokens, dtype=mlx.core.uint32).reshape(
             1, -1
         )
@@ -455,23 +482,80 @@ class GPTModel(MLXModule):
         ).reshape(-1, 1)
         indices = row + offsets
 
+        # Calculate logits without thoughts
         targets = mlx.core.take(targets, indices=indices, axis=1)
+        assert targets.shape == (b, l - a + 1, a)
 
         logits, h = model(inputs, return_hidden_state=True)
+        assert logits.shape == (b, l, v)
+        assert h.shape == (b, l, e)
         h = mlx.core.take(h, indices=indices, axis=1)
         logits = mlx.core.take(logits, indices=indices, axis=1)
+        assert logits.shape == (b, l - a + 1, a, v)
 
-        x = model.generate_thoughts(inputs)
-        h_thought = model.hidden_states(x)
-        logits_thought = model.lm_head(h_thought)
+        # Calculate logits with thoughts
+        inputs = mlx.core.repeat(inputs, repeats=model.num_thoughts, axis=0)
+        assert inputs.shape == (b * n, l)
 
+        logits_thought, input_with_thoughts = model.generate_thoughts(inputs)
+        input_with_thoughts = mlx.core.stop_gradient(input_with_thoughts)
+        assert logits_thought.shape == (b * n, l, t, v)
+        assert input_with_thoughts.shape == (b * n, l, 1 + t + 2 + a)
+        h_thought = model.hidden_states(input_with_thoughts)
+        assert h_thought.shape == (b * n, l - a + 1, a, e)
+        logits_lookahead = model.lm_head(h_thought)
+        assert logits_lookahead.shape == (b * n, l - a + 1, a, v)
+
+        # Calculate mixing weight
+        h = mlx.core.repeat(h, repeats=model.num_thoughts, axis=0)
+        assert h.shape == (b * n, l - a + 1, a, e)
         w = model.mixing_head(h, h_thought)
+        assert w.shape == (b * n, l - a + 1, a, 1)
 
-        y = w * logits + (1.0 - w) * logits_thought
+        # Calculate final logits
+        # logits: (B * N, L - A, A, V), N = num thoughts, A = lookahead length
+        logits = mlx.core.repeat(logits, repeats=model.num_thoughts, axis=0)
+        logits_final = w * logits + (1.0 - w) * logits_lookahead
+        assert logits.shape == (b * n, l - a + 1, a, v)
+        assert logits_final.shape == (b * n, l - a + 1, a, v)
 
-        loss = cls.calculate_loss(y, targets, reduce=False)
-        raise NotImplementedError("forward pass not completely implemented")
-        return loss
+        # Calculate negative log likelihood
+        # loss: (B, N, L - A), N = num thoughts, A = lookahead length
+        targets = mlx.core.repeat(targets, repeats=model.num_thoughts, axis=0)
+        loss = cls.calculate_loss(logits_final, targets, reduce=False)
+        loss = mlx.core.mean(loss, axis=-1).reshape(b, model.num_thoughts, -1)
+        assert loss.shape == (b, n, l - a + 1)
+
+        # Calculate REINFORCE loss
+        r = -loss
+        r_mean = r.mean(axis=1, keepdims=True)
+        reward = mlx.core.stop_gradient(mlx.nn.relu(r - r_mean))
+        assert reward.shape == (b, n, l - a + 1)
+
+        logits_thought = logits_thought.reshape(
+            b, model.num_thoughts, logits_thought.shape[1], logits_thought.shape[2], -1
+        )
+        input_with_thoughts = input_with_thoughts.reshape(
+            b, model.num_thoughts, input_with_thoughts.shape[1], -1
+        )
+        thought_targets = input_with_thoughts[:, :, :, 2 : 2 + model.thought_length]
+        assert logits_thought.shape == (b, n, l, t, v)
+        assert input_with_thoughts.shape == (b, n, l, 1 + t + 2 + a)
+        assert thought_targets.shape == (b, n, l, t)
+        policy_loss = reward * mlx.core.mean(
+            cls.calculate_loss(
+                logits_thought[:, :, : -model.lookahead_tokens + 1],
+                thought_targets[:, :, : -model.lookahead_tokens + 1],
+                reduce=False,
+            ),
+            axis=-1,
+        )
+        assert policy_loss.shape == (b, n, l - a + 1)
+
+        # Calculate total loss averaging across batch, thought number and token position
+        total_loss = mlx.core.mean(loss + policy_loss)
+
+        return total_loss
 
     def training_step(self, batch: dict[str, mlx.core.array], batch_idx: int) -> float:
         x = batch["input_ids"][:, :-1]

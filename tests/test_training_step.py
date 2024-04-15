@@ -6,7 +6,7 @@ from quiet_star.gpt_mlx import GPTModel
 
 def test_training_step() -> None:
     config = Config(
-        batch_size=2,
+        batch_size=5,
         thought_length=3,
         lookahead_tokens=2,
         model=ModelConfig(
@@ -21,7 +21,7 @@ def test_training_step() -> None:
     )
     model = GPTModel(config)
 
-    text = "This is a test."
+    text = "This is a longer test sentence."
     x = model.tokenizer(
         text,
         padding="do_not_pad",

@@ -5,9 +5,9 @@
 - [x] implement mixing head
 - [x] implement logits mixing
 - [x] implement computation of negative log likelihood
-- [ ] implement computation of reward
-- [ ] implement computation of policy gradient
-- [ ] implement overall loss
+- [x] implement computation of reward
+- [x] implement computation of policy gradient
+- [x] implement overall loss
 - [ ] add gradient weighting
 
 ## Using a pretrained model
