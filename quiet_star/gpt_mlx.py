@@ -7,11 +7,9 @@ import mlx.utils
 from transformers import AutoTokenizer
 
 from quiet_star.config import Config, ModelConfig
+from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.mlx import MLXModule
 from quiet_star.utils import assert_shape, mlx_dtype
-
-START_THOUGHT_TOKEN = "<|startofthought|>"
-END_THOUGHT_TOKEN = "<|endofthought|>"
 
 
 class SelfAttentionBlock(mlx.nn.Module):

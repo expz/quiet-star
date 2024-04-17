@@ -11,10 +11,13 @@ def main() -> None:
         seed=1,
         model=ModelConfig(
             attn_type="torch",
-            device=torch.device("cpu"),
+            device=torch.device("mps"),
             dropout_attn=0.0,
             dropout_embed=0.0,
             dtype=torch.float32,
+            embed_dim=3 * 8,
+            num_heads=3,
+            num_layers=3,
         ),
     )
     train_gpt(config)
