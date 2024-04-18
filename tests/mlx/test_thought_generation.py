@@ -3,7 +3,7 @@ import random
 import mlx.core
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.gpt_mlx import _GPTModel
+from quiet_star.mlx.gpt import _GPTModel
 
 
 def prepare_test_inputs(

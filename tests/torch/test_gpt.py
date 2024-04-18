@@ -1,12 +1,13 @@
 import random
 
-import mlx.core
+import torch
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.gpt_mlx import _GPTModel
+from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
+from quiet_star.torch.gpt import GPTModel
 
 
-def tokenize(model: _GPTModel, config: Config, text: str) -> list[int]:
+def tokenize(model: GPTModel, config: Config, text: str) -> list[int]:
     return model.tokenizer(
         text,
         padding="do_not_pad",
@@ -18,15 +19,15 @@ def tokenize(model: _GPTModel, config: Config, text: str) -> list[int]:
 
 
 def prepare_test_inputs(
-    model: _GPTModel,
+    model: GPTModel,
     config: Config,
     text: str,
     max_thought_length: int,
     lookahead_length: int,
 ) -> tuple[list[list[int]], list[list[int]]]:
     x = tokenize(model, config, text)
-    start_thought_token = tokenize(model, config, "<|startofthought|>")[0]
-    end_thought_token = tokenize(model, config, "<|endofthought|>")[0]
+    start_thought_token = tokenize(model, config, START_THOUGHT_TOKEN)[0]
+    end_thought_token = tokenize(model, config, END_THOUGHT_TOKEN)[0]
     pad_token = model.tokenizer.pad_token_id
     x1 = [
         x[:i]
@@ -44,24 +45,21 @@ def prepare_test_inputs(
     return x1, x2
 
 
-def extract_correct_hidden_states(config: Config, h1: mlx.core.array) -> mlx.core.array:
+def extract_correct_hidden_states(config: Config, h1: torch.Tensor) -> torch.Tensor:
     b, l, _, _ = h1.shape
     k = 1 + config.thought_length + 1
     h1 = [
         [
-            mlx.core.take(
-                h1[j, i],
-                mlx.core.array(list(range(i + k, i + k + config.lookahead_tokens))),
-                axis=0,
-            ).tolist()
-            for i in range(l)
+            h1[j, i, i + k : i + k + config.lookahead_tokens].tolist()
+            # only include states where we have enough lookahead tokens
+            for i in range(l - (config.lookahead_tokens - 1))
         ]
         for j in range(b)
     ]
-    h1 = mlx.core.array(h1)
 
-    # drop the states where we don't have enough lookahead tokens
-    return h1[:, : l - (config.lookahead_tokens - 1)]
+    h1 = torch.Tensor(h1)
+
+    return h1
 
 
 def test_hidden_states() -> None:
@@ -70,7 +68,7 @@ def test_hidden_states() -> None:
         lookahead_tokens=3,
         thought_length=4,
         model=ModelConfig(
-            attn_type="mlx",
+            attn_type="torch",
             dropout_attn=0.0,
             dropout_embed=0.0,
             embed_dim=3 * 8,
@@ -79,7 +77,7 @@ def test_hidden_states() -> None:
             num_layers=1,
         ),
     )
-    model = _GPTModel(config)
+    model = GPTModel(config)
 
     text = "This is a test."
     l1, l2 = [], []
@@ -90,8 +88,8 @@ def test_hidden_states() -> None:
         l1.append(i1)
         l2.append(i2)
 
-    x1 = mlx.core.array(l1, dtype=mlx.core.uint32)
-    x2 = mlx.core.array(l2, dtype=mlx.core.uint32)
+    x1 = torch.LongTensor(l1, device=config.model.device)
+    x2 = torch.LongTensor(l2, device=config.model.device)
 
     expected_x1_shape = (
         config.batch_size,
@@ -113,7 +111,7 @@ def test_hidden_states() -> None:
     b, l, m = x1.shape
 
     # x1 must be 2D to work with mlx.nn.MultiHeadAttention
-    _, h1 = model(x1.reshape(b * l, m), return_hidden_state=True)
+    _, h1 = model.forward(x1.reshape(b * l, m), return_hidden_state=True)
     h1 = h1.reshape(b, l, m, -1)
 
     # extract the hidden states we care about
@@ -125,6 +123,6 @@ def test_hidden_states() -> None:
         h1.shape == h2.shape
     ), f"correct hidden states and calculate hidden states had different shape: {h1.shape} and {h2.shape}"
 
-    assert mlx.core.allclose(
+    assert torch.allclose(
         h1, h2, atol=1e-6
-    ).item(), f"the hidden states were not correct, correct hidden states: {h1}, actual hidden states: {h2}"
+    ), f"the hidden states were not correct, correct hidden states: {h1}, actual hidden states: {h2}"

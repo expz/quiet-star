@@ -1,6 +1,6 @@
 import math
 
-import mlx.core  # type: ignore
+import mlx.core
 import mlx.nn
 import mlx.optimizers
 import mlx.utils
@@ -8,8 +8,8 @@ from transformers import AutoTokenizer
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
-from quiet_star.mlx import MLXModule
-from quiet_star.utils import assert_shape, mlx_dtype
+from quiet_star.mlx.framework import MLXModule
+from quiet_star.mlx.utils import assert_shape
 
 
 class SelfAttentionBlock(mlx.nn.Module):

@@ -5,7 +5,7 @@ from lightning.pytorch.callbacks import RichProgressBar
 
 from quiet_star.config import Config
 from quiet_star.dataset import get_open_web_math_dataset
-from quiet_star.gpt import GPTModel
+from quiet_star.torch.gpt import GPTModel
 
 
 def train_gpt(config: Config) -> GPTModel:

@@ -1,13 +1,10 @@
-from functools import partial
-
 import mlx.core.random  # type: ignore
 import mlx.nn
-import numpy as np
 
 from quiet_star.config import Config
 from quiet_star.dataset import get_open_web_math_dataset
-from quiet_star.gpt_mlx import GPTModel
-from quiet_star.mlx import MLXDataLoader, MLXTrainer
+from quiet_star.mlx.framework import MLXDataLoader, MLXTrainer
+from quiet_star.mlx.gpt import GPTModel
 
 
 def train_gpt(config: Config) -> GPTModel:

@@ -1,7 +1,7 @@
 import torch
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.train import train_gpt
+from quiet_star.torch.train import train_gpt
 
 
 def main() -> None:
@@ -14,7 +14,7 @@ def main() -> None:
             device=torch.device("mps"),
             dropout_attn=0.0,
             dropout_embed=0.0,
-            dtype=torch.float32,
+            dtype="float32",
             embed_dim=3 * 8,
             num_heads=3,
             num_layers=3,

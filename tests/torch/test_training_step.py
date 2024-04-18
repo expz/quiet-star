@@ -1,7 +1,7 @@
-import mlx.core
+import torch
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.gpt_mlx import GPTModel
+from quiet_star.torch.gpt import GPTModel
 
 
 def test_training_step() -> None:
@@ -10,7 +10,7 @@ def test_training_step() -> None:
         thought_length=3,
         lookahead_tokens=2,
         model=ModelConfig(
-            attn_type="mlx",
+            attn_type="torch",
             dropout_attn=0.0,
             dropout_embed=0.0,
             embed_dim=3 * 8,
@@ -30,6 +30,6 @@ def test_training_step() -> None:
         return_tensors="np",
         return_attention_mask=False,
     )["input_ids"][0].tolist()
-    x = mlx.core.array([x for _ in range(config.batch_size)])
+    x = torch.LongTensor([x for _ in range(config.batch_size)])
 
-    GPTModel.forward_pass(model.model, x[:, :-1], x[:, 1:])
+    model.forward_pass(x[:, :-1], x[:, 1:])

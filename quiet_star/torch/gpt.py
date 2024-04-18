@@ -8,13 +8,14 @@ import torch.utils.data
 from torch.nn import functional as F
 from transformers import AutoTokenizer
 
-from quiet_star.attention_torch import TorchCausalSelfAttention
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
-from quiet_star.utils import assert_shape
+from quiet_star.mlx.utils import assert_shape
+from quiet_star.torch.attention_torch import TorchCausalSelfAttention
+from quiet_star.torch.utils import expand_dims, torch_dtype
 
 try:
-    from quiet_star.attention_triton import TritonCausalSelfAttention
+    from quiet_star.torch.attention_triton import TritonCausalSelfAttention
 except ModuleNotFoundError:
     pass
 
@@ -28,10 +29,10 @@ class SelfAttentionBlock(torch.nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.ln1 = torch.nn.LayerNorm(
-            config.embed_dim, device=config.device, dtype=config.dtype
+            config.embed_dim, device=config.device, dtype=torch_dtype(config.dtype)
         )
         self.ln2 = torch.nn.LayerNorm(
-            config.embed_dim, device=config.device, dtype=config.dtype
+            config.embed_dim, device=config.device, dtype=torch_dtype(config.dtype)
         )
         if config.attn_type == "torch":
             self.self_attn = TorchCausalSelfAttention(
@@ -40,7 +41,7 @@ class SelfAttentionBlock(torch.nn.Module):
                 config.max_length,
                 config.dropout_attn,
                 device=config.device,
-                dtype=config.dtype,
+                dtype=torch_dtype(config.dtype),
             )
         elif config.attn_type == "triton":
             self.self_attn = TritonCausalSelfAttention(
@@ -49,7 +50,7 @@ class SelfAttentionBlock(torch.nn.Module):
                 config.max_length,
                 config.dropout_attn,
                 device=config.device,
-                dtype=config.dtype,
+                dtype=torch_dtype(config.dtype),
             )
         else:
             raise ValueError("Unrecognized attention type:", config.attn_type)
@@ -58,14 +59,14 @@ class SelfAttentionBlock(torch.nn.Module):
                 config.embed_dim,
                 4 * config.embed_dim,
                 device=config.device,
-                dtype=config.dtype,
+                dtype=torch_dtype(config.dtype),
             ),
             GELU(),
             torch.nn.Linear(
                 4 * config.embed_dim,
                 config.embed_dim,
                 device=config.device,
-                dtype=config.dtype,
+                dtype=torch_dtype(config.dtype),
             ),
             torch.nn.Dropout(config.dropout_attn),
         )
@@ -90,7 +91,7 @@ class GPTModel(lightning.LightningModule):
 
         model_config = config.model
 
-        self._dtype = model_config.dtype
+        self._dtype = torch_dtype(model_config.dtype)
         self.embed_dim = model_config.embed_dim
         self.num_heads = model_config.num_heads
         self.max_length = model_config.max_length
@@ -125,27 +126,29 @@ class GPTModel(lightning.LightningModule):
             vocab_size,
             model_config.embed_dim,
             device=model_config.device,
-            dtype=model_config.dtype,
+            dtype=torch_dtype(model_config.dtype),
         )
         self.pos_emb = torch.nn.Embedding(
             model_config.max_length,
             model_config.embed_dim,
             device=model_config.device,
-            dtype=model_config.dtype,
+            dtype=torch_dtype(model_config.dtype),
         )
         self.drop = torch.nn.Dropout(model_config.dropout_embed)
         self.layers = [
             SelfAttentionBlock(model_config) for _ in range(model_config.num_layers)
         ]
         self.ln = torch.nn.LayerNorm(
-            model_config.embed_dim, device=model_config.device, dtype=model_config.dtype
+            model_config.embed_dim,
+            device=model_config.device,
+            dtype=torch_dtype(model_config.dtype),
         )
         self.lm_head = torch.nn.Linear(
             model_config.embed_dim,
             vocab_size,
             bias=False,
             device=model_config.device,
-            dtype=model_config.dtype,
+            dtype=torch_dtype(model_config.dtype),
         )
         # input embedding and logit output weights should be tied
         # do not reverse equality or initial loss will increase 10-fold
@@ -156,14 +159,14 @@ class GPTModel(lightning.LightningModule):
                 2 * model_config.embed_dim,
                 2 * model_config.embed_dim,
                 device=model_config.device,
-                dtype=model_config.dtype,
+                dtype=torch_dtype(model_config.dtype),
             ),
             torch.nn.ReLU(),
             torch.nn.Linear(
                 2 * model_config.embed_dim,
                 1,
                 device=model_config.device,
-                dtype=model_config.dtype,
+                dtype=torch_dtype(model_config.dtype),
             ),
             torch.nn.Sigmoid(),
         )
@@ -201,18 +204,14 @@ class GPTModel(lightning.LightningModule):
             torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
             diagonal=1,
         )
-        causal_mask1 = torch.unsqueeze(
-            torch.unsqueeze(torch.unsqueeze(causal_mask1, 0), 1), 3
-        )
+        causal_mask1 = expand_dims(causal_mask1, (0, 1, 3))
         causal_mask2 = torch.triu(
             torch.full(
                 (m, m - 1), float("-inf"), dtype=self._dtype, device=self.device
             ),
             diagonal=0,
         )
-        causal_mask2 = torch.unsqueeze(
-            torch.unsqueeze(torch.unsqueeze(causal_mask2, 0), 1), 2
-        )
+        causal_mask2 = expand_dims(causal_mask2, (0, 1, 2))
 
         token_embeddings = self.tok_emb(x)
         row = torch.arange(0, m, dtype=torch.int64, device=self.device).reshape(1, m)
@@ -231,6 +230,9 @@ class GPTModel(lightning.LightningModule):
                 layer.self_attn.attn.in_proj_bias,
                 [self.embed_dim, self.embed_dim, self.embed_dim],
             )
+            q_proj_weight = q_proj_weight.T
+            k_proj_weight = k_proj_weight.T
+            v_proj_weight = v_proj_weight.T
             q = (
                 (x @ q_proj_weight + q_proj_bias)
                 .reshape(b, l, m, layer.self_attn.attn.num_heads, -1)
@@ -387,18 +389,14 @@ class GPTModel(lightning.LightningModule):
             torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
             diagonal=1,
         )
-        causal_mask1 = torch.unsqueeze(
-            torch.unsqueeze(torch.unsqueeze(causal_mask1, 0), 1), 3
-        )
+        causal_mask1 = expand_dims(causal_mask1, (0, 1, 3))
         causal_mask2 = torch.triu(
             torch.full(
                 (t + 1, t + 1), float("-inf"), dtype=self._dtype, device=self.device
             ),
             diagonal=1,
         )
-        causal_mask2 = torch.unsqueeze(
-            torch.unsqueeze(torch.unsqueeze(causal_mask2[t - d + 1 :, 1:], 0), 1), 2
-        )
+        causal_mask2 = expand_dims(causal_mask2[t - d + 1 :, 1:], (0, 1, 2))
 
         rows = torch.arange(0, d, dtype=torch.int64, device=self.device).reshape(1, d)
         row_offsets = torch.arange(
@@ -418,6 +416,9 @@ class GPTModel(lightning.LightningModule):
                 layer.self_attn.attn.in_proj_bias,
                 [self.embed_dim, self.embed_dim, self.embed_dim],
             )
+            q_proj_weight = q_proj_weight.T
+            k_proj_weight = k_proj_weight.T
+            v_proj_weight = v_proj_weight.T
             if activation_cache[i]:
                 q = (
                     (x @ q_proj_weight + q_proj_bias)
@@ -594,7 +595,7 @@ class GPTModel(lightning.LightningModule):
 
         # Calculate negative log likelihood
         # loss: (B, N, L - A), N = num thoughts, A = lookahead length
-        targets = targets.repeat(self.num_thoughts, 1)
+        targets = targets.repeat(self.num_thoughts, 1, 1)
         loss = self.calculate_loss(logits_final, targets, reduce=False)
         loss = torch.mean(loss, dim=-1).reshape(b, self.num_thoughts, -1)
         assert_shape(loss, (b, n, lpp))

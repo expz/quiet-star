@@ -15,7 +15,7 @@ class TorchCausalSelfAttention(torch.nn.Module):
         super().__init__()
 
         self.attn = torch.nn.MultiheadAttention(
-            embed_dim, num_heads, dropout, device=device, dtype=dtype
+            embed_dim, num_heads, dropout, device=device, dtype=dtype, batch_first=True
         )
         self.mask = torch.triu(
             torch.full(
