@@ -10,9 +10,8 @@ from transformers import AutoTokenizer
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
-from quiet_star.mlx.utils import assert_shape
 from quiet_star.torch.attention_torch import TorchCausalSelfAttention
-from quiet_star.torch.utils import expand_dims, torch_dtype
+from quiet_star.torch.utils import assert_shape, expand_dims, torch_dtype
 
 try:
     from quiet_star.torch.attention_triton import TritonCausalSelfAttention
