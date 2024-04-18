@@ -38,3 +38,8 @@ disallow_untyped_defs = true
 disable_error_code = ["import-untyped"]
 follow_imports = "skip"
 exclude = [".venv"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
