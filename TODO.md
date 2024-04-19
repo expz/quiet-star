@@ -8,10 +8,10 @@
 - [x] implement computation of reward
 - [x] implement computation of policy gradient
 - [x] implement overall loss
-- [ ] add gradient weighting
+- [x] add gradient weighting
 
 ## Using a pretrained model
-- [ ] convert MLX code to PyTorch
+- [x] convert MLX code to PyTorch
 - [ ] convert logits without thoughts to work with pretrained Huggingface model
 - [ ] convert thought generation to work with pretrained Huggingface model
 - [ ] convert hidden state generation to work with pretrained Huggingface model

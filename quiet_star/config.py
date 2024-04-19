@@ -18,16 +18,20 @@ class ModelConfig:
 
 @dataclasses.dataclass
 class Config:
-    batch_size: int = 16
+    batch_size: int = 1
     betas: Tuple[float, float] = (0.9, 0.999)
+    embedding_grad_weight: float = 100.0
+    embedding_init_token: str = "---"
     epochs: int = 2
-    learning_rate: float = 1e-5
+    learning_rate: float = 1e-6
     lookahead_tokens: int = 4
     max_samples: int = 2048
     num_thoughts: int = 2
+    optimizer_warmup: int = 20
+    policy_weight: float = 1e6
     seed: int = 123
     thought_length: int = 12
     test_pct: float = 0.125
-    weight_decay: float = 0.01
+    weight_decay: float = 0.001
 
     model: ModelConfig = ModelConfig()
