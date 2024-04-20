@@ -1,7 +1,17 @@
-import mlx.core
+import sys
 
-from quiet_star.config import Config, ModelConfig
-from quiet_star.mlx.gpt import GPTModel
+import pytest
+
+try:
+    import mlx.core
+
+    from quiet_star.config import Config, ModelConfig
+    from quiet_star.mlx.gpt import GPTModel
+except ModuleNotFoundError:
+    pass
+
+if sys.platform != "darwin":
+    pytest.skip("All tests in this module require macOS", allow_module_level=True)
 
 
 def test_training_step() -> None:

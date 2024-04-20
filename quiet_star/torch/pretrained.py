@@ -5,10 +5,9 @@ import lightning.pytorch
 import torch
 import torch.nn
 import torch.utils.data
-import transformers.modeling_utils
 from torch.nn import functional as F
-from transformers import AutoConfig, AutoTokenizer
-from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers.modeling_utils import PreTrainedModel
 
 from quiet_star.config import Config
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
@@ -16,18 +15,25 @@ from quiet_star.torch.utils import assert_shape, expand_dims, torch_dtype
 
 
 class PretrainedThoughtModel(lightning.LightningModule):
-    def __init__(
-        self, model: transformers.modeling_utils.PreTrainedModel, config: Config
-    ):
+    def __init__(self, config: Config):
         super().__init__()
+
+        model_config = config.model
+        self._dtype = torch_dtype(model_config.dtype)
+
+        model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+            model_config.model_name,
+            torch_dtype=self._dtype,
+            trust_remote_code=False,
+        )
 
         modules = dict(model.named_modules())
 
-        model_config = config.model
-
         pretrained_config = AutoConfig.from_pretrained(model_config.model_name)
 
-        self._dtype = torch_dtype(pretrained_config.torch_dtype)
+        # WARNING: The vocab size / size of embedding weights is larger than
+        #          len(tokenizer). The extra weights correspond to dummy tokens.
+        self.vocab_size = pretrained_config.vocab_size
         self.embed_dim = pretrained_config.hidden_size
         assert (
             pretrained_config.num_key_value_heads
@@ -69,33 +75,32 @@ class PretrainedThoughtModel(lightning.LightningModule):
         )
         init_token_embedding = init_token_embedding.mean(dim=0)
 
-        vocab_size = len(self.tokenizer)
-
         self.tok_emb = torch.nn.Embedding(
-            vocab_size,
+            self.vocab_size,
             self.embed_dim,
             device=model_config.device,
             dtype=self._dtype,
         )
-        self.tok_emb.weight[: pretrained_config.vocab_size, :] = (
-            model.get_input_embeddings().weight
-        )
-        self.tok_emb.weight[self.start_thought_token_id, :] = init_token_embedding
-        self.tok_emb.weight[self.end_thought_token_id, :] = init_token_embedding
+        with torch.no_grad():
+            self.tok_emb.weight[: self.vocab_size, :] = (
+                model.get_input_embeddings().weight.detach()
+            )
+            self.tok_emb.weight[self.start_thought_token_id, :] = init_token_embedding
+            self.tok_emb.weight[self.end_thought_token_id, :] = init_token_embedding
 
         trainability_mask = torch.zeros_like(self.tok_emb.weight)
         trainability_mask[-2:] = config.embedding_grad_weight
         self.tok_emb.weight.register_hook(lambda grad: grad * trainability_mask)
 
-        self.layers = list(modules["model.layers"])
+        self.layers = torch.nn.ModuleList(modules["model.layers"])
 
         self.ln = modules["model.norm"]
         self.lm_head = torch.nn.Linear(
             model_config.embed_dim,
-            vocab_size,
+            self.vocab_size,
             bias=False,
             device=model_config.device,
-            dtype=torch_dtype(model_config.dtype),
+            dtype=self._dtype,
         )
         # Tie output to input weights
         self.lm_head.weight = self.tok_emb.weight
@@ -109,7 +114,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
             ),
             torch.nn.ReLU(),
             torch.nn.Linear(
-                2 * model_config.embed_dim,
+                2 * self.embed_dim,
                 1,
                 device=model_config.device,
                 dtype=self._dtype,
@@ -129,7 +134,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
     ) -> torch.Tensor:
         x = self.tok_emb(x)
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x)[0]  # the layers return a tuple with a single element
         h = self.ln(x)
         logits = self.lm_head(h)
 
@@ -176,7 +181,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
 
         row = torch.arange(0, m, dtype=torch.int64, device=self.device).reshape(1, m)
         offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
-        position_ids = (row + offset).reshape(1, l, m)
+        position_ids = (row + offset).reshape(1, l, m).tile((b, 1, 1))
 
         x = self.tok_emb(x)
 
@@ -209,12 +214,11 @@ class PretrainedThoughtModel(lightning.LightningModule):
                 .permute([0, 3, 1, 2, 4])
             )
 
-            # TODO: Fix me
-            cos1, sin1 = layer.rotary_emb(v1, seq_len=x.shape[1])
-            cos2, sin2 = layer.rotary_emb(v2, seq_len=x.shape[1])
-            q = apply_rotary_pos_emb(q, cos1, sin1, position_ids)
-            k1 = apply_rotary_pos_emb(k1, cos1, sin1, position_ids[:, :, 0])
-            k2 = apply_rotary_pos_emb(k2, cos2, sin2, position_ids[:, :, 1:])
+            # apply rotary embedding
+            cos, sin = layer.self_attn.rotary_emb(v1, seq_len=l + m)
+            q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
+            k1 = self.apply_rotary_pos_emb(k1, cos, sin, position_ids[:, :, :1])
+            k2 = self.apply_rotary_pos_emb(k2, cos, sin, position_ids[:, :, 1:])
 
             a = torch.nn.functional.softmax(
                 torch.concatenate(
@@ -360,7 +364,10 @@ class PretrainedThoughtModel(lightning.LightningModule):
         row_offsets = torch.arange(
             t - d + 1, l + t - d + 1, dtype=torch.int64, device=self.device
         ).reshape(l, 1)
-        position_ids = rows + row_offsets
+        position_ids = (rows + row_offsets).reshape((1, l, d)).tile((b, 1, 1))
+
+        print("x:", x.shape)
+        print("position_ids:", position_ids.shape)
 
         x = self.tok_emb(x)
 
@@ -420,12 +427,12 @@ class PretrainedThoughtModel(lightning.LightningModule):
             activation_cache[i]["k2"] = k2
             activation_cache[i]["v2"] = v2
 
-            # TODO: Fix me, including interaction with activation_cache
-            cos1, sin1 = layer.rotary_emb(v1, seq_len=x.shape[1])
-            cos2, sin2 = layer.rotary_emb(v2, seq_len=x.shape[1])
-            q = apply_rotary_pos_emb(q, cos1, sin1, position_ids)
-            k1 = apply_rotary_pos_emb(k1, cos1, sin1, position_ids[:, :, 0])
-            k2 = apply_rotary_pos_emb(k2, cos2, sin2, position_ids[:, :, 1:])
+            # apply rotary embedding
+            cos, sin = layer.self_attn.rotary_emb(v1, seq_len=l + t + 1)
+            q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
+            k1 = self.apply_rotary_pos_emb(k1, cos, sin, position_ids[:, :, :1])
+            if d > 1:  # only apply to k2 if it is nonempty
+                k2 = self.apply_rotary_pos_emb(k2, cos, sin, position_ids[:, :, 1:])
 
             a = torch.nn.functional.softmax(
                 torch.concatenate(
@@ -497,7 +504,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
         lp = min(l, self.max_length - (t + 2 + a))
         lpp = min(l - (a - 1), self.max_length - (t + 2 + a) - (a - 1))
         e = self.embed_dim
-        v = len(self.tokenizer)
+        v = self.vocab_size
 
         assert_shape(inputs, (b, l))
         assert_shape(targets, (b, l))

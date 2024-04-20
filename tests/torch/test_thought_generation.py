@@ -1,10 +1,12 @@
 import random
 
+import lightning
 import torch
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import START_THOUGHT_TOKEN
 from quiet_star.torch.gpt import GPTModel
+from quiet_star.torch.pretrained import PretrainedThoughtModel
 
 
 def prepare_test_inputs(
@@ -43,11 +45,18 @@ def calculate_correct_logits(
     batch_size: int,
 ) -> torch.Tensor:
     correct_logits = []
+    print("model device:", model.device)
     for i in range(len(x)):
-        xi = torch.LongTensor([x[: i + 1] + thought_tokens[i][:thought_length]])
+        xi = torch.tensor(
+            [x[: i + 1] + thought_tokens[i][:thought_length]],
+            dtype=torch.int64,
+            device=model.device,
+        )
         correct_logits.append(model(xi)[0, -1].tolist())
-    return torch.FloatTensor(
-        [correct_logits for _ in range(batch_size)]
+    return torch.tensor(
+        [correct_logits for _ in range(batch_size)],
+        dtype=model._dtype,
+        device=model.device,
     )  # add batch dimension
 
 
@@ -56,19 +65,22 @@ def prepare_next_thought_token_input(
     thought_tokens: list[list[int]],
     thought_length: int,
     batch_size: int,
+    device: str | torch.device,
     last_thought_token_only: bool,
 ) -> torch.Tensor:
     if not last_thought_token_only:
         thoughts = [tokens[:thought_length] for tokens in thought_tokens]
-        x = torch.LongTensor(x)
+        x = torch.tensor(x, dtype=torch.int64, device=device)
         x = torch.unsqueeze(x, dim=-1)
-        thoughts = torch.LongTensor(thoughts)
+        thoughts = torch.tensor(thoughts, dtype=torch.int64, device=device)
         inputs = torch.concatenate([x, thoughts], dim=-1).tolist()
     else:
         thoughts = [[tokens[thought_length - 1]] for tokens in thought_tokens]
         inputs = thoughts
 
-    return torch.LongTensor([inputs for _ in range(batch_size)])  # add batch dimension
+    return torch.tensor(
+        [inputs for _ in range(batch_size)], dtype=torch.int64, device=device
+    )  # add batch dimension
 
 
 def generate_and_verify_logits(
@@ -88,6 +100,7 @@ def generate_and_verify_logits(
         thought_tokens,
         thought_length,
         batch_size,
+        model.device,
         last_thought_token_only=(thought_length > 1),
     )
     logits, activation_cache = model.generate_next_thought_token(
@@ -95,7 +108,7 @@ def generate_and_verify_logits(
     )
     logits = logits[:, :, -1].squeeze()  # only compare logits of last thought tokens
 
-    expected_shape = (batch_size, len(x), len(model.tokenizer))
+    expected_shape = (batch_size, len(x), model.vocab_size)
     assert (
         correct_logits.shape == expected_shape
     ), f"for thought length {thought_length}, correct logits has shape {correct_logits.shape}, expected shape {expected_shape}"
@@ -112,7 +125,20 @@ def generate_and_verify_logits(
     return activation_cache
 
 
-def test_thought_generation() -> None:
+def run_thought_generation_test(
+    model: lightning.LightningModule, config: Config
+) -> None:
+    activation_cache = None
+    x, thought_tokens = prepare_test_inputs(
+        model, config, "This is a test.", config.thought_length
+    )
+    for t in range(1, config.thought_length + 1):
+        activation_cache = generate_and_verify_logits(
+            model, x, thought_tokens, t, config.batch_size, activation_cache
+        )
+
+
+def test_gpt_thought_generation() -> None:
     config = Config(
         batch_size=2,
         thought_length=3,
@@ -126,13 +152,24 @@ def test_thought_generation() -> None:
             num_layers=3,
         ),
     )
-    model = GPTModel(config)
+    model = GPTModel(config).to(config.model.device)
+    run_thought_generation_test(model, config)
 
-    activation_cache = None
-    x, thought_tokens = prepare_test_inputs(
-        model, config, "This is a test.", config.thought_length
+
+def test_pretrained_thought_generation() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=2,
+        thought_length=3,
+        model=ModelConfig(
+            attn_type="torch",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            dtype="bfloat16",
+            model_name="Qwen/Qwen1.5-0.5B-Chat",
+            max_length=32,
+        ),
     )
-    for t in range(1, config.thought_length + 1):
-        activation_cache = generate_and_verify_logits(
-            model, x, thought_tokens, t, config.batch_size, activation_cache
-        )
+    model = PretrainedThoughtModel(config).to(config.model.device)
+    run_thought_generation_test(model, config)

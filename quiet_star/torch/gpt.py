@@ -119,10 +119,10 @@ class GPTModel(lightning.LightningModule):
             END_THOUGHT_TOKEN, return_attention_mask=False
         )["input_ids"][0]
 
-        vocab_size = len(self.tokenizer)
+        self.vocab_size = len(self.tokenizer)
 
         self.tok_emb = torch.nn.Embedding(
-            vocab_size,
+            self.vocab_size,
             model_config.embed_dim,
             device=model_config.device,
             dtype=torch_dtype(model_config.dtype),
@@ -134,9 +134,9 @@ class GPTModel(lightning.LightningModule):
             dtype=torch_dtype(model_config.dtype),
         )
         self.drop = torch.nn.Dropout(model_config.dropout_embed)
-        self.layers = [
+        self.layers = torch.nn.ModuleList(
             SelfAttentionBlock(model_config) for _ in range(model_config.num_layers)
-        ]
+        )
         self.ln = torch.nn.LayerNorm(
             model_config.embed_dim,
             device=model_config.device,
@@ -144,7 +144,7 @@ class GPTModel(lightning.LightningModule):
         )
         self.lm_head = torch.nn.Linear(
             model_config.embed_dim,
-            vocab_size,
+            self.vocab_size,
             bias=False,
             device=model_config.device,
             dtype=torch_dtype(model_config.dtype),
