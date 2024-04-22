@@ -95,15 +95,14 @@ class PretrainedThoughtModel(lightning.LightningModule):
         self.layers = torch.nn.ModuleList(modules["model.layers"])
 
         self.ln = modules["model.norm"]
-        self.lm_head = torch.nn.Linear(
-            model_config.embed_dim,
-            self.vocab_size,
-            bias=False,
-            device=model_config.device,
-            dtype=self._dtype,
-        )
-        # Tie output to input weights
-        self.lm_head.weight = self.tok_emb.weight
+        self.lm_head = modules["lm_head"]
+        with torch.no_grad():
+            init_lm_head_weight = self.lm_head.weight[
+                init_embedding_token_ids, :
+            ].detach()
+            init_lm_head_weight = init_lm_head_weight.mean(dim=0)
+            self.lm_head.weight[self.start_thought_token_id, :] = init_lm_head_weight
+            self.lm_head.weight[self.end_thought_token_id, :] = init_lm_head_weight
 
         self.mixing_mlp = torch.nn.Sequential(
             torch.nn.Linear(
@@ -129,17 +128,82 @@ class PretrainedThoughtModel(lightning.LightningModule):
         num_params = sum(p.numel() for p in self.parameters())
         print("number of parameters: %.2fM" % (num_params / 1e6,))
 
-    def forward(
+    def forward_for_testing(
         self, x: torch.Tensor, return_hidden_state: bool = False
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        b, l = x.shape
+
+        causal_mask1 = torch.triu(
+            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
+            diagonal=1,
+        )
+        causal_mask1 = causal_mask1.unsqueeze(0)
+
+        row = torch.arange(0, l, dtype=torch.int64, device=self.device)
+        position_ids = row.reshape(1, l).tile((b, 1))
+
         x = self.tok_emb(x)
         for layer in self.layers:
-            x = layer(x)[0]  # the layers return a tuple with a single element
+            residual = x
+            x = layer.input_layernorm(x)
+
+            q = (
+                layer.self_attn.q_proj(x)
+                .reshape(b, l, self.num_heads, -1)
+                .permute([0, 2, 1, 3])
+            )
+            k = (
+                layer.self_attn.k_proj(x)
+                .reshape(b, l, self.num_heads, -1)
+                .permute([0, 2, 1, 3])
+            )
+            v = (
+                layer.self_attn.v_proj(x)
+                .reshape(b, l, self.num_heads, -1)
+                .permute([0, 2, 1, 3])
+            )
+
+            # apply rotary embedding
+            cos, sin = layer.self_attn.rotary_emb(v, seq_len=l)
+            q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
+            k = self.apply_rotary_pos_emb(k, cos, sin, position_ids)
+
+            a = torch.nn.functional.softmax(
+                (torch.matmul(q, k.permute([0, 1, 3, 2])) + causal_mask1)
+                / math.sqrt(self.embed_dim / self.num_heads),
+                dim=-1,
+            )
+
+            # attn_out is (B, H, L, E)
+            attn_out = torch.matmul(a, v)
+            attn_out = layer.self_attn.o_proj(
+                attn_out.permute([0, 2, 1, 3]).reshape(b, l, self.embed_dim)
+            )
+            x = residual + attn_out
+            x = x + layer.mlp(layer.post_attention_layernorm(x))
+        # (B, L, E)
+        h = self.ln(x)
+
+        logits = self.lm_head(h)
+        if return_hidden_state:
+            return logits, h
+        return logits
+
+    def forward(
+        self, x: torch.Tensor, return_hidden_state: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        x = self.tok_emb(x)
+        attns = []
+        for layer in self.layers:
+            x, attn = layer(
+                x, output_attentions=True
+            )  # the layers return a tuple with a single element
+            attns.append(attn)
         h = self.ln(x)
         logits = self.lm_head(h)
 
         if return_hidden_state:
-            return logits, h
+            return logits, h, attns
         return logits
 
     @classmethod
@@ -186,6 +250,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
         x = self.tok_emb(x)
 
         for layer in self.layers:
+            residual = x
             x = layer.input_layernorm(x)
 
             q = (
@@ -214,6 +279,8 @@ class PretrainedThoughtModel(lightning.LightningModule):
                 .permute([0, 3, 1, 2, 4])
             )
 
+            if layer == self.layers[1]:
+                print("k1:", k1.shape)
             # apply rotary embedding
             cos, sin = layer.self_attn.rotary_emb(v1, seq_len=l + m)
             q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
@@ -249,7 +316,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
             attn_out = layer.self_attn.o_proj(
                 attn_out.permute([0, 2, 3, 1, 4]).reshape(b, l, m, self.embed_dim)
             )
-            x = x + attn_out
+            x = residual + attn_out
             x = x + layer.mlp(layer.post_attention_layernorm(x))
         # (B, L, D, E)
         h = self.ln(x)
@@ -366,12 +433,10 @@ class PretrainedThoughtModel(lightning.LightningModule):
         ).reshape(l, 1)
         position_ids = (rows + row_offsets).reshape((1, l, d)).tile((b, 1, 1))
 
-        print("x:", x.shape)
-        print("position_ids:", position_ids.shape)
-
         x = self.tok_emb(x)
 
         for i, layer in enumerate(self.layers):
+            residual = x
             x = layer.input_layernorm(x)
             if activation_cache[i]:
                 q = (
@@ -463,10 +528,11 @@ class PretrainedThoughtModel(lightning.LightningModule):
             attn_out = layer.self_attn.o_proj(
                 attn_out.permute([0, 2, 3, 1, 4]).reshape(b, l, d, self.embed_dim)
             )
-            x = x + attn_out
+            x = residual + attn_out
             x = x + layer.mlp(layer.post_attention_layernorm(x))
-        x = self.ln(x)
-        logits = self.lm_head(x)
+
+        h = self.ln(x)
+        logits = self.lm_head(h)
 
         assert activation_cache is not None
 
