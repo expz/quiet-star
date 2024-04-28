@@ -269,12 +269,10 @@ class PretrainedThoughtModel(lightning.LightningModule):
         pad_mask1 = pad_mask1.masked_fill_(
             pad_mask1 == 0.0, float("-inf")
         ).masked_fill_(pad_mask1 == 1.0, 0.0)
-        print(pad_mask1.shape, pad_mask1.tolist())
         pad_mask2 = torch.matmul(pad_mask, pad_mask[:, :, :, 1:].transpose(3, 4))
         pad_mask2 = pad_mask2.masked_fill_(
             pad_mask2 == 0.0, float("-inf")
         ).masked_fill_(pad_mask2 == 1.0, 0.0)
-        print(pad_mask2.shape, pad_mask2.tolist())
         row = torch.arange(0, m, dtype=torch.int64, device=self.device).reshape(1, m)
         offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
         position_ids = (row + offset).reshape(1, l, m).tile((b, 1, 1))
@@ -293,7 +291,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
             k1 = (
                 layer.self_attn.k_proj(x[:, :, 0])
                 .reshape(b, l, 1, self.num_heads, -1)
-                .permute([0, 3, 2, 1, 4])
+                .permute([0, 3, 1, 2, 4])
             )
             k2 = (
                 layer.self_attn.k_proj(x[:, :, 1:])
@@ -322,7 +320,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
                     [
                         # attend to tokens in original string
                         # (B, H, L, M, E) @ (B, H, 1, E, L) => (B, H, L, M, L)
-                        torch.matmul(q, k1.permute([0, 1, 2, 4, 3]))
+                        torch.matmul(q, k1.permute([0, 1, 3, 4, 2]))
                         + causal_mask1
                         + pad_mask1,
                         # attend to thought and lookahead tokens
@@ -386,16 +384,19 @@ class PretrainedThoughtModel(lightning.LightningModule):
 
     def generate_thoughts(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         b, l = x.shape
+
+        # only generate thoughts for tokens which have enough lookahead tokens
         n = self.thought_length + 2 + self.lookahead_tokens
+        lpp = min(self.max_length - n, l - (self.lookahead_tokens - 1))
 
         start_token = torch.full(
-            (b, min(l, self.max_length - n), 1),
+            (b, lpp, 1),
             self.start_thought_token_id,
             device=x.device,
             dtype=torch.int64,
         )
         end_token = torch.full(
-            (b, min(l, self.max_length - n), 1),
+            (b, lpp, 1),
             self.end_thought_token_id,
             device=x.device,
             dtype=torch.int64,
@@ -405,12 +406,13 @@ class PretrainedThoughtModel(lightning.LightningModule):
         )
         lookahead = self.shift_and_stack(
             torch.concatenate([x, padding], dim=1),
-            rows=min(l, self.max_length - n),
+            rows=lpp,
             cols=self.lookahead_tokens,
             col_offset=1,
         )
 
-        x = torch.unsqueeze(x[:, : self.max_length - n], dim=2)
+        x = x[:, :lpp]
+        x = torch.unsqueeze(x, dim=2)
         x = torch.concatenate([x, start_token], dim=2)
         next_tokens = x
 
@@ -502,7 +504,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
                 k1 = (
                     layer.self_attn.k_proj(x[:, :, 0, :])
                     .reshape(b, l, 1, self.num_heads, -1)
-                    .permute([0, 3, 2, 1, 4])
+                    .permute([0, 3, 1, 2, 4])
                 )
                 k2 = (
                     layer.self_attn.k_proj(x[:, :, 1:, :])
@@ -539,7 +541,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
                     [
                         # attend to tokens in original string
                         # (B, H, L, D, E) @ (B, H, 1, E, L) => (B, H, L, D, L)
-                        torch.matmul(q, k1.permute([0, 1, 2, 4, 3])) + causal_mask1,
+                        torch.matmul(q, k1.permute([0, 1, 3, 4, 2])) + causal_mask1,
                         # attend to thought tokens generated so far
                         # (B, H, L, D, E) @ (B, H, L, E, T) => (B, H, L, D, T)
                         torch.matmul(q, k2.permute([0, 1, 2, 4, 3])) + causal_mask2,
@@ -635,8 +637,8 @@ class PretrainedThoughtModel(lightning.LightningModule):
 
         logits_thought, input_with_thoughts = self.generate_thoughts(inputs)
         input_with_thoughts = input_with_thoughts.detach()
-        assert_shape(logits_thought, (b * n, lp, t, v))
-        assert_shape(input_with_thoughts, (b * n, lp, 1 + t + 2 + a))
+        assert_shape(logits_thought, (b * n, lpp, t, v))
+        assert_shape(input_with_thoughts, (b * n, lpp, 1 + t + 2 + a))
         h_thought = self.hidden_states(input_with_thoughts)
         assert_shape(h_thought, (b * n, lpp, a, e))
         logits_lookahead = self.lm_head(h_thought)
@@ -675,14 +677,14 @@ class PretrainedThoughtModel(lightning.LightningModule):
             b, self.num_thoughts, input_with_thoughts.shape[1], -1
         )
         thought_targets = input_with_thoughts[:, :, :, 2 : 2 + self.thought_length]
-        assert_shape(logits_thought, (b, n, lp, t, v))
-        assert_shape(input_with_thoughts, (b, n, lp, 1 + t + 2 + a))
-        assert_shape(thought_targets, (b, n, lp, t))
+        assert_shape(logits_thought, (b, n, lpp, t, v))
+        assert_shape(input_with_thoughts, (b, n, lpp, 1 + t + 2 + a))
+        assert_shape(thought_targets, (b, n, lpp, t))
 
         policy_loss = reward * torch.mean(
             self.calculate_loss(
-                logits_thought[:, :, : -self.lookahead_tokens + 1],
-                thought_targets[:, :, : -self.lookahead_tokens + 1],
+                logits_thought,
+                thought_targets,
                 reduce=False,
             ),
             dim=-1,

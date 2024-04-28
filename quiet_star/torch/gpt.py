@@ -338,16 +338,18 @@ class GPTModel(lightning.LightningModule):
 
     def generate_thoughts(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         b, l = x.shape
+        # only generate thoughts for tokens which have enough lookahead tokens
         n = self.thought_length + 2 + self.lookahead_tokens
+        lpp = min(self.max_length - n, l - (self.lookahead_tokens - 1))
 
         start_token = torch.full(
-            (b, min(l, self.max_length - n), 1),
+            (b, lpp, 1),
             self.start_thought_token_id,
             device=x.device,
             dtype=torch.int64,
         )
         end_token = torch.full(
-            (b, min(l, self.max_length - n), 1),
+            (b, lpp, 1),
             self.end_thought_token_id,
             device=x.device,
             dtype=torch.int64,
@@ -357,12 +359,12 @@ class GPTModel(lightning.LightningModule):
         )
         lookahead = self.shift_and_stack(
             torch.concatenate([x, padding], dim=1),
-            rows=min(l, self.max_length - n),
+            rows=lpp,
             cols=self.lookahead_tokens,
             col_offset=1,
         )
 
-        x = torch.unsqueeze(x[:, : self.max_length - n], dim=2)
+        x = torch.unsqueeze(x[:, :lpp], dim=2)
         x = torch.concatenate([x, start_token], dim=2)
         next_tokens = x
 
@@ -589,8 +591,8 @@ class GPTModel(lightning.LightningModule):
 
         logits_thought, input_with_thoughts = self.generate_thoughts(inputs)
         input_with_thoughts = input_with_thoughts.detach()
-        assert_shape(logits_thought, (b * n, lp, t, v))
-        assert_shape(input_with_thoughts, (b * n, lp, 1 + t + 2 + a))
+        assert_shape(logits_thought, (b * n, lpp, t, v))
+        assert_shape(input_with_thoughts, (b * n, lpp, 1 + t + 2 + a))
         h_thought = self.hidden_states(input_with_thoughts)
         assert_shape(h_thought, (b * n, lpp, a, e))
         logits_lookahead = self.lm_head(h_thought)
@@ -629,14 +631,14 @@ class GPTModel(lightning.LightningModule):
             b, self.num_thoughts, input_with_thoughts.shape[1], -1
         )
         thought_targets = input_with_thoughts[:, :, :, 2 : 2 + self.thought_length]
-        assert_shape(logits_thought, (b, n, lp, t, v))
-        assert_shape(input_with_thoughts, (b, n, lp, 1 + t + 2 + a))
-        assert_shape(thought_targets, (b, n, lp, t))
+        assert_shape(logits_thought, (b, n, lpp, t, v))
+        assert_shape(input_with_thoughts, (b, n, lpp, 1 + t + 2 + a))
+        assert_shape(thought_targets, (b, n, lpp, t))
 
         policy_loss = reward * torch.mean(
             self.calculate_loss(
-                logits_thought[:, :, : -self.lookahead_tokens + 1],
-                thought_targets[:, :, : -self.lookahead_tokens + 1],
+                logits_thought,
+                thought_targets,
                 reduce=False,
             ),
             dim=-1,

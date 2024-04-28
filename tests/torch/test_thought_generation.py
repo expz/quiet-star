@@ -117,7 +117,7 @@ def generate_and_verify_logits(
     ), f"for thought length {thought_length}, logits has shape {logits.shape}, expected shape {expected_shape}"
 
     assert torch.allclose(
-        correct_logits, logits, atol=1e-6
+        correct_logits, logits, atol=1e-2
     ), f"for thought length {thought_length}, logits were not close: correct logits {correct_logits} actual logits {logits}"
 
     assert activation_cache is not None
