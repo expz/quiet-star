@@ -12,6 +12,7 @@ def test_pretrained_forward() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     config = Config(
         batch_size=2,
+        lookahead_tokens=3,
         thought_length=3,
         model=ModelConfig(
             attn_type="torch",

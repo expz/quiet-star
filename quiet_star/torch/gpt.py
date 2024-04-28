@@ -118,6 +118,7 @@ class GPTModel(lightning.LightningModule):
         self.end_thought_token_id = self.tokenizer(
             END_THOUGHT_TOKEN, return_attention_mask=False
         )["input_ids"][0]
+        self.pad_token_id = self.tokenizer.pad_token_id
 
         self.vocab_size = len(self.tokenizer)
 
@@ -212,6 +213,21 @@ class GPTModel(lightning.LightningModule):
         )
         causal_mask2 = expand_dims(causal_mask2, (0, 1, 2))
 
+        pad_mask = expand_dims(
+            torch.full(x.shape, 0, dtype=self._dtype, device=self.device).masked_fill_(
+                x != self.pad_token_id, 1.0
+            ),
+            (1, 4),
+        ).tile((1, self.num_heads, 1, 1, 1))
+        pad_mask1 = torch.matmul(pad_mask, pad_mask[:, :, :, :1].transpose(3, 4))
+        pad_mask1 = pad_mask1.masked_fill_(
+            pad_mask1 == 0.0, float("-inf")
+        ).masked_fill_(pad_mask1 == 1.0, 0.0)
+        pad_mask2 = torch.matmul(pad_mask, pad_mask[:, :, :, 1:].transpose(3, 4))
+        pad_mask2 = pad_mask2.masked_fill_(
+            pad_mask2 == 0.0, float("-inf")
+        ).masked_fill_(pad_mask2 == 1.0, 0.0)
+
         token_embeddings = self.tok_emb(x)
         row = torch.arange(0, m, dtype=torch.int64, device=self.device).reshape(1, m)
         offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
@@ -262,16 +278,18 @@ class GPTModel(lightning.LightningModule):
                     [
                         # attend to tokens in original string
                         # (B, H, L, M, E) @ (B, H, 1, E, L) => (B, H, L, M, L)
-                        torch.matmul(q, k1.permute([0, 1, 2, 4, 3])) + causal_mask1,
+                        torch.matmul(q, k1.permute([0, 1, 2, 4, 3]))
+                        + causal_mask1,  # + pad_mask1,
                         # attend to thought and lookahead tokens
                         # (B, H, L, M, E) @ (B, H, L, E, M - 1) => (B, H, L, M, M - 1)
-                        torch.matmul(q, k2.permute([0, 1, 2, 4, 3])) + causal_mask2,
+                        torch.matmul(q, k2.permute([0, 1, 2, 4, 3]))
+                        + causal_mask2,  # + pad_mask2,
                     ],
                     dim=-1,
                 )
                 / math.sqrt(self.embed_dim / self.num_heads),
                 dim=-1,
-            )
+            ).nan_to_num()  # padding mask will usually cause NaNs by rows of all -infty
             a1 = a[:, :, :, :, :l]
             a2 = a[:, :, :, :, l:]
             # attn_out is (B, H, L, D, E)
@@ -294,8 +312,7 @@ class GPTModel(lightning.LightningModule):
         # only keep the hidden states which we care about
         h = h[:, :, -(self.lookahead_tokens + 1) : -1]
 
-        # drop the states where we don't have enough lookahead tokens
-        return h[:, : l - (self.lookahead_tokens - 1)]
+        return h
 
     def sample_next_tokens(
         self, logits: torch.Tensor, temp: float = 1.0

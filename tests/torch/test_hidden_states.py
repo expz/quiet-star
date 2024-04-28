@@ -52,11 +52,7 @@ def extract_correct_hidden_states(config: Config, h1: torch.Tensor) -> torch.Ten
     b, l, _, _ = h1.shape
     k = 1 + config.thought_length + 1
     h1 = [
-        [
-            h1[j, i, i + k : i + k + config.lookahead_tokens].tolist()
-            # only include states where we have enough lookahead tokens
-            for i in range(l - (config.lookahead_tokens - 1))
-        ]
+        [h1[j, i, i + k : i + k + config.lookahead_tokens].tolist() for i in range(l)]
         for j in range(b)
     ]
 
@@ -74,20 +70,23 @@ def run_hidden_states_test(model: lightning.LightningModule, config: Config) -> 
         i1, i2 = prepare_test_inputs(
             model, config, text, config.thought_length, config.lookahead_tokens
         )
+        print("i1:", i1)
+        print("i2:", i2)
         l1.append(i1)
         l2.append(i2)
 
     x1 = torch.tensor(l1, dtype=torch.int64, device=config.model.device)
     x2 = torch.tensor(l2, dtype=torch.int64, device=config.model.device)
 
+    l = x1.shape[1]
     expected_x1_shape = (
         config.batch_size,
-        x1.shape[1],
-        x1.shape[1] + config.thought_length + 2,
+        l,
+        l + config.thought_length + 2,
     )
     expected_x2_shape = (
         config.batch_size,
-        x2.shape[1],
+        l,
         1 + config.thought_length + 2 + config.lookahead_tokens,
     )
     assert (
@@ -97,10 +96,14 @@ def run_hidden_states_test(model: lightning.LightningModule, config: Config) -> 
         x2.shape == expected_x2_shape
     ), f"x2 has unexpected shape, expected shape: {expected_x2_shape}, actual shape: {x2.shape}"
 
+    # only include states where we have enough lookahead tokens
+    x1 = x1[:, : l - (config.lookahead_tokens - 1)]
+    x2 = x2[:, : l - (config.lookahead_tokens - 1)]
+
     b, l, m = x1.shape
 
-    # x1 must be 2D to work with mlx.nn.MultiHeadAttention
-    _, h1, attns = model.forward(x1.reshape(b * l, m), return_hidden_state=True)
+    # x1 must be 2D to work with Qwen2
+    _, h1 = model.forward(x1.reshape(b * l, m), return_hidden_state=True)
     h1 = h1.reshape(b, l, m, -1)
 
     # extract the hidden states we care about
@@ -121,7 +124,7 @@ def test_gpt_hidden_states() -> None:
     config = Config(
         batch_size=2,
         lookahead_tokens=3,
-        thought_length=4,
+        thought_length=3,
         model=ModelConfig(
             attn_type="torch",
             dropout_attn=0.0,
@@ -129,7 +132,7 @@ def test_gpt_hidden_states() -> None:
             embed_dim=3 * 8,
             max_length=32,
             num_heads=3,
-            num_layers=1,
+            num_layers=3,
         ),
     )
     model = GPTModel(config).to(config.model.device)
@@ -140,6 +143,7 @@ def test_pretrained_hidden_states() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     config = Config(
         batch_size=2,
+        lookahead_tokens=3,
         thought_length=3,
         model=ModelConfig(
             attn_type="torch",

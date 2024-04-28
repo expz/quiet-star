@@ -26,6 +26,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
             torch_dtype=self._dtype,
             trust_remote_code=False,
         )
+        self.model = model
 
         modules = dict(model.named_modules())
 
@@ -61,6 +62,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
             num_added_tokens == 2
         ), f"attempted to add 2 tokens but {num_added_tokens} were added"
 
+        self.pad_token_id = self.tokenizer.pad_token_id
         self.start_thought_token_id = self.tokenizer(
             START_THOUGHT_TOKEN, return_attention_mask=False
         )["input_ids"][0]
@@ -75,16 +77,17 @@ class PretrainedThoughtModel(lightning.LightningModule):
         )
         init_token_embedding = init_token_embedding.mean(dim=0)
 
-        self.tok_emb = torch.nn.Embedding(
-            self.vocab_size,
-            self.embed_dim,
-            device=model_config.device,
-            dtype=self._dtype,
-        )
+        # self.tok_emb = torch.nn.Embedding(
+        #     self.vocab_size,
+        #     self.embed_dim,
+        #     device=model_config.device,
+        #     dtype=self._dtype,
+        # )
+        self.tok_emb = modules["model.embed_tokens"]
         with torch.no_grad():
-            self.tok_emb.weight[: self.vocab_size, :] = (
-                model.get_input_embeddings().weight.detach()
-            )
+            # self.tok_emb.weight[: self.vocab_size, :] = (
+            #     model.get_input_embeddings().weight.detach()
+            # )
             self.tok_emb.weight[self.start_thought_token_id, :] = init_token_embedding
             self.tok_emb.weight[self.end_thought_token_id, :] = init_token_embedding
 
@@ -192,19 +195,32 @@ class PretrainedThoughtModel(lightning.LightningModule):
     def forward(
         self, x: torch.Tensor, return_hidden_state: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        # result = self.model(x, output_attentions=True, output_hidden_states=True)
+
+        b, l = x.shape
+
+        causal_mask = torch.triu(
+            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
+            diagonal=1,
+        )
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(1).tile((b, 1, 1, 1))
+
         x = self.tok_emb(x)
         attns = []
         for layer in self.layers:
             x, attn = layer(
-                x, output_attentions=True
+                x, attention_mask=causal_mask, output_attentions=True
             )  # the layers return a tuple with a single element
             attns.append(attn)
         h = self.ln(x)
         logits = self.lm_head(h)
 
         if return_hidden_state:
-            return logits, h, attns
+            return logits, h
         return logits
+        # if return_hidden_state:
+        #     return result.logits, result.hidden_states[-1]
+        # return result.logits
 
     @classmethod
     def rotate_half(cls, x: torch.Tensor) -> torch.Tensor:
@@ -243,6 +259,22 @@ class PretrainedThoughtModel(lightning.LightningModule):
         )
         causal_mask2 = expand_dims(causal_mask2, (0, 1, 2))
 
+        pad_mask = expand_dims(
+            torch.full(x.shape, 0, dtype=self._dtype, device=self.device).masked_fill_(
+                x != self.pad_token_id, 1.0
+            ),
+            (1, 4),
+        ).tile((1, self.num_heads, 1, 1, 1))
+        pad_mask1 = torch.matmul(pad_mask, pad_mask[:, :, :, :1].transpose(3, 4))
+        pad_mask1 = pad_mask1.masked_fill_(
+            pad_mask1 == 0.0, float("-inf")
+        ).masked_fill_(pad_mask1 == 1.0, 0.0)
+        print(pad_mask1.shape, pad_mask1.tolist())
+        pad_mask2 = torch.matmul(pad_mask, pad_mask[:, :, :, 1:].transpose(3, 4))
+        pad_mask2 = pad_mask2.masked_fill_(
+            pad_mask2 == 0.0, float("-inf")
+        ).masked_fill_(pad_mask2 == 1.0, 0.0)
+        print(pad_mask2.shape, pad_mask2.tolist())
         row = torch.arange(0, m, dtype=torch.int64, device=self.device).reshape(1, m)
         offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
         position_ids = (row + offset).reshape(1, l, m).tile((b, 1, 1))
@@ -279,8 +311,6 @@ class PretrainedThoughtModel(lightning.LightningModule):
                 .permute([0, 3, 1, 2, 4])
             )
 
-            if layer == self.layers[1]:
-                print("k1:", k1.shape)
             # apply rotary embedding
             cos, sin = layer.self_attn.rotary_emb(v1, seq_len=l + m)
             q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
@@ -292,19 +322,25 @@ class PretrainedThoughtModel(lightning.LightningModule):
                     [
                         # attend to tokens in original string
                         # (B, H, L, M, E) @ (B, H, 1, E, L) => (B, H, L, M, L)
-                        torch.matmul(q, k1.permute([0, 1, 2, 4, 3])) + causal_mask1,
+                        torch.matmul(q, k1.permute([0, 1, 2, 4, 3]))
+                        + causal_mask1
+                        + pad_mask1,
                         # attend to thought and lookahead tokens
                         # (B, H, L, M, E) @ (B, H, L, E, M - 1) => (B, H, L, M, M - 1)
-                        torch.matmul(q, k2.permute([0, 1, 2, 4, 3])) + causal_mask2,
+                        torch.matmul(q, k2.permute([0, 1, 2, 4, 3]))
+                        + causal_mask2
+                        + pad_mask2,
                     ],
                     dim=-1,
                 )
                 / math.sqrt(self.embed_dim / self.num_heads),
                 dim=-1,
-            )
+            ).nan_to_num()  # padding mask will usually cause NaNs by rows of all -infty
+            # if layer == self.layers[1]:
+            #     print("a:", a.shape, a)
             a1 = a[:, :, :, :, :l]
             a2 = a[:, :, :, :, l:]
-            # attn_out is (B, H, L, D, E)
+            # attn_out is (B, H, L, M, E)
             attn_out = (
                 # contributions of tokens in original string
                 # (B, H, L, M, L) @ (B, H, 1, L, E) => (B, H, L, M, E)
@@ -318,14 +354,13 @@ class PretrainedThoughtModel(lightning.LightningModule):
             )
             x = residual + attn_out
             x = x + layer.mlp(layer.post_attention_layernorm(x))
-        # (B, L, D, E)
+        # (B, L, M, E)
         h = self.ln(x)
 
         # only keep the hidden states which we care about
         h = h[:, :, -(self.lookahead_tokens + 1) : -1]
 
-        # drop the states where we don't have enough lookahead tokens
-        return h[:, : l - (self.lookahead_tokens - 1)]
+        return h
 
     def sample_next_tokens(
         self, logits: torch.Tensor, temp: float = 1.0
