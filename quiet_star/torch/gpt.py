@@ -178,9 +178,74 @@ class GPTModel(lightning.LightningModule):
         num_params = sum(p.numel() for p in self.parameters())
         print("number of parameters: %.2fM" % (num_params / 1e6,))
 
+    def forward_for_testing(
+        self, x: torch.Tensor, return_hidden_state: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        b, l = x.shape
+
+        causal_mask = torch.triu(
+            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
+            diagonal=1,
+        )
+        causal_mask = causal_mask.unsqueeze(0)
+
+        token_embeddings = self.tok_emb(x)
+
+        pos = torch.arange(0, x.shape[1], dtype=torch.int64, device=self.device)
+        position_embeddings = self.pos_emb(pos)
+
+        x = self.drop(token_embeddings + position_embeddings)
+        for layer in self.layers:
+            x = layer.ln1(x)
+            q_proj_weight, k_proj_weight, v_proj_weight = torch.split(
+                layer.self_attn.attn.in_proj_weight,
+                [self.embed_dim, self.embed_dim, self.embed_dim],
+            )
+            q_proj_bias, k_proj_bias, v_proj_bias = torch.split(
+                layer.self_attn.attn.in_proj_bias,
+                [self.embed_dim, self.embed_dim, self.embed_dim],
+            )
+            q_proj_weight = q_proj_weight.T
+            k_proj_weight = k_proj_weight.T
+            v_proj_weight = v_proj_weight.T
+            q = (
+                (x @ q_proj_weight + q_proj_bias)
+                .reshape(b, l, layer.self_attn.attn.num_heads, -1)
+                .transpose(1, 2)
+            )
+            k = (
+                (x @ k_proj_weight + k_proj_bias)
+                .reshape(b, l, layer.self_attn.attn.num_heads, -1)
+                .transpose(1, 2)
+            )
+            v = (
+                (x @ v_proj_weight + v_proj_bias)
+                .reshape(b, l, layer.self_attn.attn.num_heads, -1)
+                .transpose(1, 2)
+            )
+            a = torch.nn.functional.softmax(
+                (torch.matmul(q, k.transpose(2, 3)) + causal_mask)
+                / math.sqrt(self.embed_dim / self.num_heads),
+                dim=-1,
+            )
+            if layer == self.layers[0]:
+                print("a correct gpt:", a.shape, a)
+            # attn_out is (B, H, L, E)
+            attn_out = torch.matmul(a, v)
+            attn_out = attn_out.transpose(1, 2).reshape(b, l, self.embed_dim)
+            attn_out = layer.self_attn.attn.out_proj(attn_out)
+            x = x + attn_out
+            x = x + layer.mlp(layer.ln2(x))
+        h = self.ln(x)
+        logits = self.lm_head(h)
+
+        if return_hidden_state:
+            return logits, h
+        return logits
+
     def forward(
         self, x: torch.Tensor, return_hidden_state: bool = False
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         token_embeddings = self.tok_emb(x)
 
         pos = torch.arange(0, x.shape[1], dtype=torch.int64, device=self.device)

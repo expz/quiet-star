@@ -10,7 +10,7 @@ from quiet_star.torch.pretrained import PretrainedThoughtModel
 
 
 def prepare_test_inputs(
-    model: GPTModel, config: Config, text: str, max_thought_length: int
+    model: lightning.LightningModule, config: Config, text: str, max_thought_length: int
 ) -> tuple[list[int], list[list[int]]]:
     x = model.tokenizer(
         text,
@@ -38,21 +38,20 @@ def prepare_test_inputs(
 
 
 def calculate_correct_logits(
-    model: GPTModel,
+    model: lightning.LightningModule,
     x: list[int],
     thought_tokens: list[list[int]],
     thought_length: int,
     batch_size: int,
 ) -> torch.Tensor:
     correct_logits = []
-    print("model device:", model.device)
     for i in range(len(x)):
         xi = torch.tensor(
             [x[: i + 1] + thought_tokens[i][:thought_length]],
             dtype=torch.int64,
             device=model.device,
         )
-        correct_logits.append(model(xi)[0, -1].tolist())
+        correct_logits.append(model.forward_for_testing(xi)[0, -1].tolist())
     return torch.tensor(
         [correct_logits for _ in range(batch_size)],
         dtype=model._dtype,
@@ -84,7 +83,7 @@ def prepare_next_thought_token_input(
 
 
 def generate_and_verify_logits(
-    model: GPTModel,
+    model: lightning.LightningModule,
     x: list[int],
     thought_tokens: list[list[int]],
     thought_length: int,
@@ -166,7 +165,7 @@ def test_pretrained_thought_generation() -> None:
             device=device,
             dropout_attn=0.0,
             dropout_embed=0.0,
-            dtype="bfloat16",
+            dtype="float32",
             model_name="Qwen/Qwen1.5-0.5B-Chat",
             max_length=32,
         ),
