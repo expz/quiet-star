@@ -626,7 +626,6 @@ class PretrainedThoughtModel(lightning.LightningModule):
         return loss
 
     def forward_pass(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        print("input size:", inputs.shape)
         # Shortcut variables for asserting tensor shapes
         b = inputs.shape[0]
         n = self.num_thoughts
