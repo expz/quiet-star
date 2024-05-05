@@ -12,12 +12,12 @@
 
 ## Using a pretrained model
 - [x] convert MLX code to PyTorch
-- [ ] reproduce pretrained model's forward pass with manually written code
-- [ ] convert logits without thoughts to work with pretrained Huggingface model
-- [ ] convert thought generation to work with pretrained Huggingface model
-- [ ] convert hidden state generation to work with pretrained Huggingface model
-- [ ] convert LM head to work with pretrained Huggingface model
-- [ ] convert mixing head to work with pretrained Huggingface model
+- [x] reproduce pretrained model's forward pass with manually written code
+- [x] convert logits without thoughts to work with pretrained Huggingface model
+- [x] convert thought generation to work with pretrained Huggingface model
+- [x] convert hidden state generation to work with pretrained Huggingface model
+- [x] convert LM head to work with pretrained Huggingface model
+- [x] convert mixing head to work with pretrained Huggingface model
 
 ## Housekeeping
 - [ ] add type annotations to triton code
