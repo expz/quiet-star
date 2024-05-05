@@ -6,13 +6,12 @@ from lightning.pytorch.callbacks import RichProgressBar
 from quiet_star.config import Config
 from quiet_star.dataset import get_open_web_math_dataset
 from quiet_star.torch.gpt import GPTModel
+from quiet_star.torch.pretrained import PretrainedThoughtModel
 
 
-def train_gpt(config: Config) -> GPTModel:
-    lightning.pytorch.seed_everything(config.seed, workers=True)
-
-    model = GPTModel(config)
-
+def _train(
+    config: Config, model: lightning.LightningModule
+) -> lightning.LightningModule:
     dataset = get_open_web_math_dataset(
         model.tokenizer,
         config.model.max_length,
@@ -37,3 +36,19 @@ def train_gpt(config: Config) -> GPTModel:
     trainer.fit(model, train_dataloader, test_dataloader)
 
     return model
+
+
+def train_gpt(config: Config) -> GPTModel:
+    lightning.pytorch.seed_everything(config.seed, workers=True)
+
+    model = GPTModel(config).to(config.model.device)
+
+    return _train(config, model)
+
+
+def train_qwen(config: Config) -> PretrainedThoughtModel:
+    lightning.pytorch.seed_everything(config.seed, workers=True)
+
+    model = PretrainedThoughtModel(config).to(config.model.device)
+
+    return _train(config, model)

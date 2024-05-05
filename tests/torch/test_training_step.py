@@ -12,7 +12,7 @@ def run_training_step_test(model: lightning.LightningModule, config: Config) -> 
         text,
         padding="do_not_pad",
         truncation=True,
-        max_length=config.model.max_length - config.thought_length - 2,
+        max_length=config.model.max_length,
         return_tensors="np",
         return_attention_mask=False,
     )["input_ids"][0].tolist()
@@ -49,6 +49,7 @@ def test_pretrained_training_step() -> None:
     config = Config(
         batch_size=2,
         thought_length=3,
+        lookahead_tokens=4,
         model=ModelConfig(
             attn_type="torch",
             device=device,

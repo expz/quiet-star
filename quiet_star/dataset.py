@@ -71,7 +71,7 @@ def get_open_web_math_dataset(
     tensor_type: str = "torch",
     use_local_cache: bool = True,
 ) -> torch.utils.data.Dataset:
-    cache_path = os.path.join(DATASET_LOCAL_PATH, tensor_type)
+    cache_path = os.path.join(DATASET_LOCAL_PATH, str(max_length), tensor_type)
     if use_local_cache:
         try:
             split_dataset = datasets.load_from_disk(cache_path)

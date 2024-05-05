@@ -91,7 +91,9 @@ class PretrainedThoughtModel(lightning.LightningModule):
             self.tok_emb.weight[self.start_thought_token_id, :] = init_token_embedding
             self.tok_emb.weight[self.end_thought_token_id, :] = init_token_embedding
 
-        trainability_mask = torch.zeros_like(self.tok_emb.weight)
+        trainability_mask = torch.zeros_like(
+            self.tok_emb.weight, device=model_config.device
+        )
         trainability_mask[-2:] = config.embedding_grad_weight
         self.tok_emb.weight.register_hook(lambda grad: grad * trainability_mask)
 
@@ -624,14 +626,14 @@ class PretrainedThoughtModel(lightning.LightningModule):
         return loss
 
     def forward_pass(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        print("input size:", inputs.shape)
         # Shortcut variables for asserting tensor shapes
         b = inputs.shape[0]
         n = self.num_thoughts
         t = self.thought_length
         a = self.lookahead_tokens
         l = inputs.shape[1]
-        lp = min(l, self.max_length - (t + 2 + a))
-        lpp = min(l - (a - 1), self.max_length - (t + 2 + a) - (a - 1))
+        lp = min(l - (a - 1), self.max_length - (t + 2 + a))
         e = self.embed_dim
         v = self.vocab_size
 
@@ -640,22 +642,20 @@ class PretrainedThoughtModel(lightning.LightningModule):
 
         offset_max = min(
             inputs.shape[-1] - (self.lookahead_tokens - 1),
-            self.max_length
-            - (self.thought_length + 2 + self.lookahead_tokens)
-            - (self.lookahead_tokens - 1),
+            self.max_length - (self.thought_length + 2 + self.lookahead_tokens),
         )
 
-        # Calculate logits without thoughts
         targets = self.shift_and_stack(targets, offset_max, self.lookahead_tokens)
-        assert_shape(targets, (b, lpp, a))
+        assert_shape(targets, (b, lp, a))
 
+        # Calculate logits without thoughts
         logits, h = self.forward(inputs, return_hidden_state=True)
         assert_shape(logits, (b, l, v))
         assert_shape(h, (b, l, e))
         h = self.shift_and_stack(h, offset_max, self.lookahead_tokens)
         logits = self.shift_and_stack(logits, offset_max, self.lookahead_tokens)
-        assert_shape(h, (b, lpp, a, e))
-        assert_shape(logits, (b, lpp, a, v))
+        assert_shape(h, (b, lp, a, e))
+        assert_shape(logits, (b, lp, a, v))
 
         # Calculate logits with thoughts
         inputs = inputs.repeat(self.num_thoughts, 1)
@@ -663,38 +663,38 @@ class PretrainedThoughtModel(lightning.LightningModule):
 
         logits_thought, input_with_thoughts = self.generate_thoughts(inputs)
         input_with_thoughts = input_with_thoughts.detach()
-        assert_shape(logits_thought, (b * n, lpp, t, v))
-        assert_shape(input_with_thoughts, (b * n, lpp, 1 + t + 2 + a))
+        assert_shape(logits_thought, (b * n, lp, t, v))
+        assert_shape(input_with_thoughts, (b * n, lp, 1 + t + 2 + a))
         h_thought = self.hidden_states(input_with_thoughts)
-        assert_shape(h_thought, (b * n, lpp, a, e))
+        assert_shape(h_thought, (b * n, lp, a, e))
         logits_lookahead = self.lm_head(h_thought)
-        assert_shape(logits_lookahead, (b * n, lpp, a, v))
+        assert_shape(logits_lookahead, (b * n, lp, a, v))
 
         # Calculate mixing weight
         h = h.repeat(self.num_thoughts, 1, 1, 1)
-        assert_shape(h, (b * n, lpp, a, e))
+        assert_shape(h, (b * n, lp, a, e))
         w = self.mixing_head(h, h_thought)
-        assert_shape(w, (b * n, lpp, a, 1))
+        assert_shape(w, (b * n, lp, a, 1))
 
         # Calculate final logits
         # logits: (B * N, L - A, A, V), N = num thoughts, A = lookahead length
         logits = logits.repeat(self.num_thoughts, 1, 1, 1)
         logits_final = w * logits + (1.0 - w) * logits_lookahead
-        assert_shape(logits, (b * n, lpp, a, v))
-        assert_shape(logits_final, (b * n, lpp, a, v))
+        assert_shape(logits, (b * n, lp, a, v))
+        assert_shape(logits_final, (b * n, lp, a, v))
 
         # Calculate negative log likelihood
         # loss: (B, N, L - A), N = num thoughts, A = lookahead length
         targets = targets.repeat(self.num_thoughts, 1, 1)
         loss = self.calculate_loss(logits_final, targets, reduce=False)
         loss = torch.mean(loss, dim=-1).reshape(b, self.num_thoughts, -1)
-        assert_shape(loss, (b, n, lpp))
+        assert_shape(loss, (b, n, lp))
 
         # Calculate REINFORCE loss
         r = -loss
         r_mean = torch.mean(r, dim=1, keepdims=True)
         reward = torch.nn.functional.relu(r - r_mean).detach()
-        assert_shape(reward, (b, n, lpp))
+        assert_shape(reward, (b, n, lp))
 
         logits_thought = logits_thought.reshape(
             b, self.num_thoughts, logits_thought.shape[1], logits_thought.shape[2], -1
@@ -703,9 +703,9 @@ class PretrainedThoughtModel(lightning.LightningModule):
             b, self.num_thoughts, input_with_thoughts.shape[1], -1
         )
         thought_targets = input_with_thoughts[:, :, :, 2 : 2 + self.thought_length]
-        assert_shape(logits_thought, (b, n, lpp, t, v))
-        assert_shape(input_with_thoughts, (b, n, lpp, 1 + t + 2 + a))
-        assert_shape(thought_targets, (b, n, lpp, t))
+        assert_shape(logits_thought, (b, n, lp, t, v))
+        assert_shape(input_with_thoughts, (b, n, lp, 1 + t + 2 + a))
+        assert_shape(thought_targets, (b, n, lp, t))
 
         policy_loss = reward * torch.mean(
             self.calculate_loss(
@@ -715,7 +715,7 @@ class PretrainedThoughtModel(lightning.LightningModule):
             ),
             dim=-1,
         )
-        assert_shape(policy_loss, (b, n, lpp))
+        assert_shape(policy_loss, (b, n, lp))
 
         # Calculate total loss averaging across batch, thought number and token position
         total_loss = torch.mean(loss + policy_loss)
