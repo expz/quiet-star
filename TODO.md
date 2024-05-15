@@ -21,4 +21,10 @@
 
 ## Housekeeping
 - [ ] add type annotations to triton code
-- [ ] create abstract base class for thinking models
+- [x] create abstract base class for thinking models
+
+## Adding OpenELM
+- [ ] reproduce openelm model's forward pass with manually written code
+- [ ] convert logits without thoughts to work with openELM
+- [ ] convert thought generation to work with openELM
+- [ ] convert hidden state generation to work with openELM
