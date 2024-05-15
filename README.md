@@ -2,7 +2,7 @@
 
 An implementation of the Quiet-STAR paper (https://arxiv.org/pdf/2403.09629.pdf).
 
-This implementation is optimized so that it performs a minimal amount of computation when generating thoughts. The tricks used to reduce the computation were alluded to in the paper. It is not optimized to the point of being hardware-aware, e.g., in the style of FlashAttention.
+This implementation is optimized so that it performs a minimal amount of computation when generating thoughts. The tricks used to reduce the computation were alluded to in the paper.
 
 ## Usage
 To set up the environment:
