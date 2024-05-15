@@ -1,9 +1,8 @@
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.qwen import QwenThoughtModel
 from quiet_star.torch.utils import torch_dtype
 

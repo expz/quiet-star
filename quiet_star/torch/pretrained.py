@@ -31,6 +31,8 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self.thought_length = config.thought_length
         self.lookahead_tokens = config.lookahead_tokens
 
+        self.max_length = config.model.max_length
+
         self.tokenizer = AutoTokenizer.from_pretrained(config.model.model_name)
 
         special_tokens_dict = {
@@ -121,10 +123,6 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def generate_thoughts(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        pass
-
-    @abc.abstractmethod
     def generate_next_thought_token(
         self,
         x: torch.Tensor,
@@ -132,6 +130,64 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         activation_cache: list[dict[str, torch.Tensor]] | None = None,
     ) -> tuple[torch.Tensor, list[dict[str, torch.Tensor]]]:
         pass
+
+    def generate_thoughts(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        b, l = x.shape
+
+        # only generate thoughts for tokens which have enough lookahead tokens
+        n = self.thought_length + 2 + self.lookahead_tokens
+        lpp = min(self.max_length - n, l - (self.lookahead_tokens - 1))
+
+        start_token = torch.full(
+            (b, lpp, 1),
+            self.start_thought_token_id,
+            device=x.device,
+            dtype=torch.int64,
+        )
+        end_token = torch.full(
+            (b, lpp, 1),
+            self.end_thought_token_id,
+            device=x.device,
+            dtype=torch.int64,
+        )
+        padding = torch.full(
+            (b, n), self.tokenizer.pad_token_id, device=x.device, dtype=torch.int64
+        )
+        lookahead = self.shift_and_stack(
+            torch.concatenate([x, padding], dim=1),
+            rows=lpp,
+            cols=self.lookahead_tokens,
+            col_offset=1,
+        )
+
+        x = x[:, :lpp]
+        x = torch.unsqueeze(x, dim=2)
+        x = torch.concatenate([x, start_token], dim=2)
+        next_tokens = x
+
+        activation_cache = None
+        thought_logits = None
+        for t in range(1, self.thought_length + 1):
+            logits, activation_cache = self.generate_next_thought_token(
+                next_tokens, t, activation_cache
+            )
+            if t == 1:
+                thought_logits = logits[:, :, -1:]
+            else:
+                thought_logits = torch.concatenate(
+                    [thought_logits, logits[:, :, -1:]], dim=2
+                )
+            next_tokens = self.sample_next_tokens(logits[:, :, -1])
+            next_tokens = torch.unsqueeze(next_tokens, -1)
+            x = torch.concatenate([x, next_tokens], dim=-1)
+
+        # (B, L, 1 + T + 2 + A)
+        x = torch.concatenate([x, end_token, lookahead], dim=-1)
+
+        # (B, L, T)
+        assert thought_logits is not None
+
+        return thought_logits, x
 
     def mixing_head(self, h: torch.Tensor, h_thought: torch.Tensor) -> torch.Tensor:
         x = torch.concatenate([h, h_thought], dim=-1)

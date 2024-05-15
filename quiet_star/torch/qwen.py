@@ -1,4 +1,5 @@
 import math
+import warnings
 
 import torch
 import torch.nn
@@ -12,20 +13,25 @@ from quiet_star.torch.utils import expand_dims
 
 class QwenThoughtModel(PretrainedThoughtModel):
     def __init__(self, config: Config):
+        pretrained_config = AutoConfig.from_pretrained(config.model.model_name)
+
+        if config.model.max_length > pretrained_config.max_position_embeddings:
+            warnings.warn(
+                f"max_length was set to {config.model.max_length} which is "
+                f"greater than the context window supported by the Qwen model "
+                f"({pretrained_config.max_position_embeddings})"
+            )
+            config.model.max_length = pretrained_config.max_position_embeddings
+
         super().__init__(config)
 
         modules = dict(self.model.named_modules())
-
-        pretrained_config = AutoConfig.from_pretrained(config.model.model_name)
 
         assert (
             pretrained_config.num_key_value_heads
             == pretrained_config.num_attention_heads
         )
         self.num_heads = pretrained_config.num_attention_heads
-        self.max_length = min(
-            pretrained_config.max_position_embeddings, config.model.max_length
-        )
 
         self.layers = torch.nn.ModuleList(modules["model.layers"])
 
@@ -242,64 +248,6 @@ class QwenThoughtModel(PretrainedThoughtModel):
         h = h[:, :, -(self.lookahead_tokens + 1) : -1]
 
         return h
-
-    def generate_thoughts(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        b, l = x.shape
-
-        # only generate thoughts for tokens which have enough lookahead tokens
-        n = self.thought_length + 2 + self.lookahead_tokens
-        lpp = min(self.max_length - n, l - (self.lookahead_tokens - 1))
-
-        start_token = torch.full(
-            (b, lpp, 1),
-            self.start_thought_token_id,
-            device=x.device,
-            dtype=torch.int64,
-        )
-        end_token = torch.full(
-            (b, lpp, 1),
-            self.end_thought_token_id,
-            device=x.device,
-            dtype=torch.int64,
-        )
-        padding = torch.full(
-            (b, n), self.tokenizer.pad_token_id, device=x.device, dtype=torch.int64
-        )
-        lookahead = self.shift_and_stack(
-            torch.concatenate([x, padding], dim=1),
-            rows=lpp,
-            cols=self.lookahead_tokens,
-            col_offset=1,
-        )
-
-        x = x[:, :lpp]
-        x = torch.unsqueeze(x, dim=2)
-        x = torch.concatenate([x, start_token], dim=2)
-        next_tokens = x
-
-        activation_cache = None
-        thought_logits = None
-        for t in range(1, self.thought_length + 1):
-            logits, activation_cache = self.generate_next_thought_token(
-                next_tokens, t, activation_cache
-            )
-            if t == 1:
-                thought_logits = logits[:, :, -1:]
-            else:
-                thought_logits = torch.concatenate(
-                    [thought_logits, logits[:, :, -1:]], dim=2
-                )
-            next_tokens = self.sample_next_tokens(logits[:, :, -1])
-            next_tokens = torch.unsqueeze(next_tokens, -1)
-            x = torch.concatenate([x, next_tokens], dim=-1)
-
-        # (B, L, 1 + T + 2 + A)
-        x = torch.concatenate([x, end_token, lookahead], dim=-1)
-
-        # (B, L, T)
-        assert thought_logits is not None
-
-        return thought_logits, x
 
     def bfloat_safe_apply(
         self, layer: torch.nn.Linear, x: torch.Tensor
