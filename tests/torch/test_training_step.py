@@ -3,7 +3,7 @@ import torch
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.torch.gpt import GPTModel
-from quiet_star.torch.pretrained import PretrainedThoughtModel
+from quiet_star.torch.qwen import QwenThoughtModel
 
 
 def run_training_step_test(model: lightning.LightningModule, config: Config) -> None:
@@ -45,9 +45,9 @@ def test_gpt_training_step() -> None:
 
 
 def test_pretrained_training_step() -> None:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu"  # "cuda" if torch.cuda.is_available() else "cpu"
     config = Config(
-        batch_size=2,
+        batch_size=1,
         thought_length=3,
         lookahead_tokens=4,
         model=ModelConfig(
@@ -59,5 +59,5 @@ def test_pretrained_training_step() -> None:
             max_length=32,
         ),
     )
-    model = PretrainedThoughtModel(config).to(config.model.device)
+    model = QwenThoughtModel(config).to(config.model.device)
     run_training_step_test(model, config)

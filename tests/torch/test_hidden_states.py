@@ -6,7 +6,7 @@ import torch
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.torch.gpt import GPTModel
-from quiet_star.torch.pretrained import PretrainedThoughtModel
+from quiet_star.torch.qwen import QwenThoughtModel
 from quiet_star.torch.utils import torch_dtype
 
 
@@ -154,5 +154,5 @@ def test_pretrained_hidden_states() -> None:
             max_length=32,
         ),
     )
-    model = PretrainedThoughtModel(config).to(config.model.device)
+    model = QwenThoughtModel(config).to(config.model.device)
     run_hidden_states_test(model, config)

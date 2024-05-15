@@ -6,7 +6,7 @@ import torch
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import START_THOUGHT_TOKEN
 from quiet_star.torch.gpt import GPTModel
-from quiet_star.torch.pretrained import PretrainedThoughtModel
+from quiet_star.torch.qwen import QwenThoughtModel
 
 
 def prepare_test_inputs(
@@ -170,5 +170,5 @@ def test_pretrained_thought_generation() -> None:
             max_length=32,
         ),
     )
-    model = PretrainedThoughtModel(config).to(config.model.device)
+    model = QwenThoughtModel(config).to(config.model.device)
     run_thought_generation_test(model, config)

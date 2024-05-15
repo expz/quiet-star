@@ -4,7 +4,7 @@ from transformers.modeling_utils import PreTrainedModel
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.torch.gpt import GPTModel
-from quiet_star.torch.pretrained import PretrainedThoughtModel
+from quiet_star.torch.qwen import QwenThoughtModel
 from quiet_star.torch.utils import torch_dtype
 
 
@@ -16,6 +16,7 @@ def test_pretrained_forward() -> None:
         thought_length=3,
         model=ModelConfig(
             attn_type="torch",
+            dtype="float32",
             device=device,
             dropout_attn=0.0,
             dropout_embed=0.0,
@@ -23,7 +24,7 @@ def test_pretrained_forward() -> None:
             max_length=32,
         ),
     )
-    thinking_model = PretrainedThoughtModel(config).to(config.model.device)
+    thinking_model = QwenThoughtModel(config).to(config.model.device)
 
     model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         config.model.model_name,
