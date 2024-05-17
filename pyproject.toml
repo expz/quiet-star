@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "quiet-star"
-version = "0.1.0"
+version = "0.7.0"
 description = "Implementation of Quiet-STAR language modeling technique"
 authors = ["Jonathan Skowera <jskowera@gmail.com>"]
 readme = "README.md"
