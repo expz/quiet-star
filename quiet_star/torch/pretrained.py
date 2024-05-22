@@ -33,7 +33,10 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         self.max_length = config.model.max_length
 
-        self.tokenizer = AutoTokenizer.from_pretrained(config.model.model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            config.model.tokenizer_name,
+            trust_remote_code=True,
+        )
 
         special_tokens_dict = {
             "additional_special_tokens": [
@@ -50,13 +53,15 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self.pad_token_id = self.tokenizer.pad_token_id
         self.start_thought_token_id = self.tokenizer(
             START_THOUGHT_TOKEN, return_attention_mask=False
-        )["input_ids"][0]
+        )["input_ids"][
+            -1
+        ]  # -1 because there might be a BOS token
         self.end_thought_token_id = self.tokenizer(
             END_THOUGHT_TOKEN, return_attention_mask=False
-        )["input_ids"][0]
+        )["input_ids"][-1]
         init_embedding_token_ids = self.tokenizer(
             config.embedding_init_token, return_attention_mask=False
-        )["input_ids"][0]
+        )["input_ids"][-1]
         init_token_embedding = (
             model.get_input_embeddings().weight[init_embedding_token_ids].detach()
         )
@@ -64,20 +69,33 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         self.tok_emb = self.model.get_input_embeddings()
 
-        # WARNING: The vocab size / size of embedding weights is larger than
-        #          len(tokenizer). The extra weights correspond to dummy tokens.
-        self.vocab_size = self.tok_emb.num_embeddings
-        self.embed_dim = self.tok_emb.embedding_dim
-
+        e, d = self.tok_emb.weight.shape
         with torch.no_grad():
+            if self.start_thought_token_id >= e or self.end_thought_token_id >= e:
+                new_embedding_count = (
+                    max(self.start_thought_token_id, self.end_thought_token_id) - e + 1
+                )
+                new_embeddings = torch.zeros(
+                    (new_embedding_count, d),
+                    dtype=self.tok_emb.weight.dtype,
+                    device=self.device,
+                )
+                self.tok_emb.weight = torch.nn.Parameter(
+                    torch.cat([self.tok_emb.weight, new_embeddings])
+                )
             self.tok_emb.weight[self.start_thought_token_id, :] = init_token_embedding
             self.tok_emb.weight[self.end_thought_token_id, :] = init_token_embedding
 
         trainability_mask = torch.zeros_like(
             self.tok_emb.weight, device=config.model.device
         )
-        trainability_mask[-2:] = config.embedding_grad_weight
+        trainability_mask[self.start_thought_token_id] = config.embedding_grad_weight
+        trainability_mask[self.end_thought_token_id] = config.embedding_grad_weight
         self.tok_emb.weight.register_hook(lambda grad: grad * trainability_mask)
+
+        # WARNING: The vocab size / size of embedding weights can be larger than
+        #          len(tokenizer). The extra weights correspond to dummy tokens.
+        self.vocab_size, self.embed_dim = self.tok_emb.weight.shape
 
         self.lm_head = self.model.lm_head
         if self.lm_head is None:
@@ -117,6 +135,11 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self, x: torch.Tensor, return_hidden_state: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         pass
+
+    def forward_for_testing(
+        self, x: torch.Tensor, return_hidden_state: bool = False
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        return self.forward(x, return_hidden_state)
 
     @abc.abstractmethod
     def hidden_states(self, x: torch.Tensor) -> torch.Tensor:

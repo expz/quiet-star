@@ -12,6 +12,7 @@ class ModelConfig:
     embed_dim: int = 64 * 6
     max_length: int = 256
     model_name: str = "Qwen/Qwen1.5-0.5B"
+    tokenizer_name: str = "Qwen/Qwen1.5-0.5B"
     num_heads: int = 6
     num_layers: int = 8
 
