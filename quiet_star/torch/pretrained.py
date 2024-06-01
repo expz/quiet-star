@@ -305,6 +305,10 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         w = self.mixing_head(h, h_thought)
         assert_shape(w, (b * n, lp, a, 1))
 
+        del inputs
+        del h
+        del h_thought
+
         # Calculate final logits
         # logits: (B * N, L - A, A, V), N = num thoughts, A = lookahead length
         logits = logits.repeat(self.num_thoughts, 1, 1, 1)

@@ -12,10 +12,10 @@ def main() -> None:
     config = Config(
         batch_size=1,
         epochs=2,
-        lookahead_tokens=2,
+        lookahead_tokens=4,
         num_thoughts=2,
         seed=1,
-        thought_length=6,
+        thought_length=8,
         model=ModelConfig(
             attn_type="torch",
             device=torch.device("cuda"),
@@ -23,7 +23,7 @@ def main() -> None:
             dropout_embed=0.0,
             dtype="bfloat16",
             embed_dim=64 * 6,
-            max_length=64,
+            max_length=80,
             model_name="Qwen/Qwen1.5-0.5B-Chat",
             num_heads=6,
             num_layers=8,
