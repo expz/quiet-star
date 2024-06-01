@@ -18,6 +18,8 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
     def __init__(self, config: Config):
         super().__init__()
 
+        self.to(config.model.device)
+
         self._dtype = torch_dtype(config.model.dtype)
 
         model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
@@ -86,9 +88,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             self.tok_emb.weight[self.start_thought_token_id, :] = init_token_embedding
             self.tok_emb.weight[self.end_thought_token_id, :] = init_token_embedding
 
-        trainability_mask = torch.zeros_like(
-            self.tok_emb.weight, device=config.model.device
-        )
+        trainability_mask = torch.zeros_like(self.tok_emb.weight, device=self.device)
         trainability_mask[self.start_thought_token_id] = config.embedding_grad_weight
         trainability_mask[self.end_thought_token_id] = config.embedding_grad_weight
         self.tok_emb.weight.register_hook(lambda grad: grad * trainability_mask)
@@ -120,7 +120,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             torch.nn.Linear(
                 2 * self.embed_dim,
                 1,
-                device=config.model.device,
+                device=self.device,
                 dtype=self._dtype,
             ),
             torch.nn.Sigmoid(),
@@ -174,7 +174,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             dtype=torch.int64,
         )
         padding = torch.full(
-            (b, n), self.tokenizer.pad_token_id, device=x.device, dtype=torch.int64
+            (b, n), self.pad_token_id, device=x.device, dtype=torch.int64
         )
         lookahead = self.shift_and_stack(
             torch.concatenate([x, padding], dim=1),
@@ -248,7 +248,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         loss = F.cross_entropy(
             logits.reshape(-1, v),
             targets.reshape(-1),
-            ignore_index=self.tokenizer.pad_token_id,
+            ignore_index=self.pad_token_id,
             reduction="none",
         ).reshape(*targets.shape)
         if reduce:

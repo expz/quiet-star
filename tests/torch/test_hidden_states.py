@@ -7,6 +7,7 @@ from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.qwen import QwenThoughtModel
+from quiet_star.torch.qwen_explicit import QwenExplicitThoughtModel
 from quiet_star.torch.utils import torch_dtype
 
 
@@ -121,25 +122,6 @@ def run_hidden_states_test(model: lightning.LightningModule, config: Config) -> 
 
 
 def test_gpt_hidden_states() -> None:
-    config = Config(
-        batch_size=2,
-        lookahead_tokens=3,
-        thought_length=3,
-        model=ModelConfig(
-            attn_type="torch",
-            dropout_attn=0.0,
-            dropout_embed=0.0,
-            embed_dim=3 * 8,
-            max_length=32,
-            num_heads=3,
-            num_layers=3,
-        ),
-    )
-    model = GPTModel(config).to(config.model.device)
-    run_hidden_states_test(model, config)
-
-
-def test_pretrained_hidden_states() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     config = Config(
         batch_size=2,
@@ -150,9 +132,52 @@ def test_pretrained_hidden_states() -> None:
             device=device,
             dropout_attn=0.0,
             dropout_embed=0.0,
+            dtype="float32",
+            embed_dim=3 * 8,
+            max_length=32,
+            num_heads=3,
+            num_layers=3,
+        ),
+    )
+    model = GPTModel(config).to(config.model.device)
+    run_hidden_states_test(model, config)
+
+
+def test_qwen_hidden_states() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=2,
+        lookahead_tokens=3,
+        thought_length=3,
+        model=ModelConfig(
+            attn_type="torch",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            dtype="float32",
             model_name="Qwen/Qwen1.5-0.5B-Chat",
             max_length=32,
         ),
     )
     model = QwenThoughtModel(config).to(config.model.device)
+    run_hidden_states_test(model, config)
+
+
+def test_qwen_explicit_hidden_states() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=2,
+        lookahead_tokens=3,
+        thought_length=3,
+        model=ModelConfig(
+            attn_type="torch",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            dtype="float32",
+            model_name="Qwen/Qwen1.5-0.5B-Chat",
+            max_length=32,
+        ),
+    )
+    model = QwenExplicitThoughtModel(config).to(config.model.device)
     run_hidden_states_test(model, config)

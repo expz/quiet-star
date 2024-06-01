@@ -3,35 +3,22 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 
 from quiet_star.config import Config, ModelConfig
-from quiet_star.torch.qwen import QwenThoughtModel
+from quiet_star.torch.pretrained import PretrainedThoughtModel
+from quiet_star.torch.qwen_explicit import QwenExplicitThoughtModel
 from quiet_star.torch.utils import torch_dtype
 
 
-def test_pretrained_forward() -> None:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    config = Config(
-        batch_size=2,
-        lookahead_tokens=3,
-        thought_length=3,
-        model=ModelConfig(
-            attn_type="torch",
-            dtype="float32",
-            device=device,
-            dropout_attn=0.0,
-            dropout_embed=0.0,
-            model_name="Qwen/Qwen1.5-0.5B-Chat",
-            max_length=32,
-        ),
-    )
-    thinking_model = QwenThoughtModel(config).to(config.model.device)
-
+def run_test_of_forward(thinking_model: PretrainedThoughtModel, config: Config) -> None:
     model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         config.model.model_name,
         torch_dtype=torch_dtype(config.model.dtype),
-        trust_remote_code=False,
+        trust_remote_code=True,
     ).to(config.model.device)
 
-    tokenizer = AutoTokenizer.from_pretrained(config.model.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model.tokenizer_name,
+        trust_remote_code=True,
+    )
 
     text = "This is a longer test sentence."
     x = tokenizer(
@@ -55,7 +42,10 @@ def test_pretrained_forward() -> None:
     original_vocab_length = len(tokenizer)
     output = model(x)
     y_correct = output.logits[:, :, :original_vocab_length]
-    y_actual = thinking_model.forward_for_testing(x)[:, :, :original_vocab_length]
+
+    thinking_output = thinking_model.forward_for_testing(x)
+    assert isinstance(thinking_output, torch.Tensor)  # appease mypy
+    y_actual = thinking_output[:, :, :original_vocab_length]
 
     assert (
         y_correct.shape == y_actual.shape
@@ -64,3 +54,25 @@ def test_pretrained_forward() -> None:
     assert torch.allclose(
         y_correct, y_actual, atol=1e-4
     ), f"logits did not match!\nexpected logits: {y_correct},\nactual logits: {y_actual}"
+
+
+def test_qwen_explicit_forward() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=2,
+        lookahead_tokens=3,
+        thought_length=3,
+        model=ModelConfig(
+            attn_type="torch",
+            dtype="float32",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            model_name="Qwen/Qwen1.5-0.5B",
+            tokenizer_name="Qwen/Qwen1.5-0.5B",
+            max_length=32,
+        ),
+    )
+    thinking_model = QwenExplicitThoughtModel(config).to(config.model.device)
+
+    run_test_of_forward(thinking_model, config)

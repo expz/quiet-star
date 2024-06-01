@@ -228,8 +228,6 @@ class GPTModel(lightning.LightningModule):
                 / math.sqrt(self.embed_dim / self.num_heads),
                 dim=-1,
             )
-            if layer == self.layers[0]:
-                print("a correct gpt:", a.shape, a)
             # attn_out is (B, H, L, E)
             attn_out = torch.matmul(a, v)
             attn_out = attn_out.transpose(1, 2).reshape(b, l, self.embed_dim)

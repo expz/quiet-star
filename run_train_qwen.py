@@ -1,17 +1,21 @@
+import os
+
 import torch
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.torch.train import train_qwen
+
+# os.environ["TORCH_CUDNN_SDPA_ENABLED"] = "1"
 
 
 def main() -> None:
     config = Config(
         batch_size=1,
         epochs=2,
-        lookahead_tokens=4,
+        lookahead_tokens=2,
         num_thoughts=2,
         seed=1,
-        thought_length=10,
+        thought_length=6,
         model=ModelConfig(
             attn_type="torch",
             device=torch.device("cuda"),

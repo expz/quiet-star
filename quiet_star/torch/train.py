@@ -8,6 +8,9 @@ from quiet_star.dataset import get_open_web_math_dataset
 from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.qwen import QwenThoughtModel
 
+# Properly utilize tensor cores
+torch.set_float32_matmul_precision("medium")
+
 
 def _train(
     config: Config, model: lightning.LightningModule
@@ -49,6 +52,6 @@ def train_gpt(config: Config) -> GPTModel:
 def train_qwen(config: Config) -> QwenThoughtModel:
     lightning.pytorch.seed_everything(config.seed, workers=True)
 
-    model = QwenThoughtModel(config).to(config.model.device)
+    model = QwenThoughtModel(config)
 
     return _train(config, model)
