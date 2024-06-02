@@ -136,11 +136,6 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         pass
 
-    def forward_for_testing(
-        self, x: torch.Tensor, return_hidden_state: bool = False
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        return self.forward(x, return_hidden_state)
-
     @abc.abstractmethod
     def hidden_states(self, x: torch.Tensor) -> torch.Tensor:
         pass

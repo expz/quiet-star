@@ -52,7 +52,7 @@ def calculate_correct_logits(
             dtype=torch.int64,
             device=model.device,
         )
-        correct_logits.append(model.forward_for_testing(xi)[0, -1].tolist())
+        correct_logits.append(model(xi)[0, -1].tolist())
     return torch.tensor(
         [correct_logits for _ in range(batch_size)],
         dtype=model._dtype,

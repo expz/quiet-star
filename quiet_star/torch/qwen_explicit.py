@@ -45,9 +45,6 @@ class QwenExplicitThoughtModel(PretrainedThoughtModel):
 
         self.ln = modules["model.norm"]
 
-        num_params = sum(p.numel() for p in self.parameters())
-        print("number of parameters: %.2fM" % (num_params / 1e6,))
-
     def forward_for_testing(
         self, x: torch.Tensor, return_hidden_state: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:

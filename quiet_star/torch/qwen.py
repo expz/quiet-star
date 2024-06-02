@@ -1,4 +1,3 @@
-import math
 import warnings
 
 import torch
@@ -37,9 +36,6 @@ class QwenThoughtModel(PretrainedThoughtModel):
         self.layers = torch.nn.ModuleList(modules["model.layers"])
 
         self.ln = modules["model.norm"]
-
-        num_params = sum(p.numel() for p in self.parameters())
-        print("number of parameters: %.2fM" % (num_params / 1e6,))
 
     def forward(
         self, x: torch.Tensor, return_hidden_state: bool = False
