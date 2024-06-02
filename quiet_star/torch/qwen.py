@@ -82,7 +82,6 @@ class QwenThoughtModel(PretrainedThoughtModel):
         cos: torch.Tensor,
         sin: torch.Tensor,
         position_ids: torch.Tensor,
-        unsqueeze_dim: int = 1,
     ) -> torch.Tensor:
         cos = cos[position_ids]
         sin = sin[position_ids]

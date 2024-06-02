@@ -3,6 +3,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 
 from quiet_star.config import Config, ModelConfig
+from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.pretrained import PretrainedThoughtModel
 from quiet_star.torch.qwen_explicit import QwenExplicitThoughtModel
 from quiet_star.torch.utils import torch_dtype
@@ -74,5 +75,27 @@ def test_qwen_explicit_forward() -> None:
         ),
     )
     thinking_model = QwenExplicitThoughtModel(config).to(config.model.device)
+
+    run_test_of_forward(thinking_model, config)
+
+
+def test_openelm_forward() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=2,
+        lookahead_tokens=3,
+        thought_length=3,
+        model=ModelConfig(
+            attn_type="torch",
+            dtype="float32",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            model_name="apple/OpenELM-270M-Instruct",
+            tokenizer_name="meta-llama/Llama-2-7b-hf",
+            max_length=32,
+        ),
+    )
+    thinking_model = OpenELMThoughtModel(config).to(config.model.device)
 
     run_test_of_forward(thinking_model, config)

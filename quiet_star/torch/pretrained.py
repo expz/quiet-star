@@ -69,7 +69,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         )
         init_token_embedding = init_token_embedding.mean(dim=0)
 
-        self.tok_emb = self.model.get_input_embeddings()
+        self.tok_emb = self.model.get_input_embeddings().to(self.device)
 
         e, d = self.tok_emb.weight.shape
         with torch.no_grad():
@@ -99,15 +99,39 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         self.lm_head = self.model.lm_head
         if self.lm_head is None:
-            self.lm_head = torch.nn.Linear(self.embed_dim, self.vocab_size)
+            self.lm_head = torch.nn.Linear(self.embed_dim, self.vocab_size, bias=False)
             self.lm_head.weight = self.tok_emb.weight
-        with torch.no_grad():
-            init_lm_head_weight = self.lm_head.weight[
-                init_embedding_token_ids, :
-            ].detach()
-            init_lm_head_weight = init_lm_head_weight.mean(dim=0)
-            self.lm_head.weight[self.start_thought_token_id, :] = init_lm_head_weight
-            self.lm_head.weight[self.end_thought_token_id, :] = init_lm_head_weight
+        else:
+            e_h, d_h = self.lm_head.weight.shape
+            with torch.no_grad():
+                # If the predefined lm_head is too small, expand it to include start
+                # and end thought tokens
+                if (
+                    self.start_thought_token_id >= e_h
+                    or self.end_thought_token_id >= e_h
+                ):
+                    new_embedding_count = (
+                        max(self.start_thought_token_id, self.end_thought_token_id)
+                        - e_h
+                        + 1
+                    )
+                    new_embeddings = torch.zeros(
+                        (new_embedding_count, d_h),
+                        dtype=self.lm_head.weight.dtype,
+                        device=self.device,
+                    )
+                    self.lm_head.weight = torch.nn.Parameter(
+                        torch.cat([self.lm_head.weight, new_embeddings])
+                    )
+
+                init_lm_head_weight = self.lm_head.weight[
+                    init_embedding_token_ids, :
+                ].detach()
+                init_lm_head_weight = init_lm_head_weight.mean(dim=0)
+                self.lm_head.weight[self.start_thought_token_id, :] = (
+                    init_lm_head_weight
+                )
+                self.lm_head.weight[self.end_thought_token_id, :] = init_lm_head_weight
 
         self.mixing_mlp = torch.nn.Sequential(
             torch.nn.Linear(
@@ -129,6 +153,62 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self.learning_rate = config.learning_rate
         self.betas = config.betas
         self.weight_decay = config.weight_decay
+
+        freq_constant = 10000
+        inv_freq = 1.0 / (
+            freq_constant
+            ** (
+                torch.arange(0, self.embed_dim, 2, dtype=torch.float32).to(self.device)
+                / self.embed_dim
+            )
+        )
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+        self._set_cos_sin_cache(
+            seq_len=self.max_length, device=self.inv_freq.device, dtype=self.dtype
+        )
+
+    def _set_cos_sin_cache(
+        self, seq_len: int, device: torch.device, dtype: torch.dtype
+    ) -> None:
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.float32)
+
+        freqs = torch.outer(t, self.inv_freq)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def rotary_emb(
+        self, x: torch.Tensor, seq_len: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype),
+            self.sin_cached[:seq_len].to(dtype=x.dtype),
+        )
+
+    @classmethod
+    def rotate_half(cls, x: torch.Tensor) -> torch.Tensor:
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2 :]
+        return torch.cat((-x2, x1), dim=-1)
+
+    @classmethod
+    def apply_rotary_pos_emb(
+        cls,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        cos = cos[position_ids]
+        sin = sin[position_ids]
+        x_embed = (x * cos) + (cls.rotate_half(x) * sin)
+        return x_embed
 
     @abc.abstractmethod
     def forward(
