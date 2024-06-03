@@ -36,8 +36,65 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
 
         self.ln = modules["transformer.norm"]
 
-        num_params = sum(p.numel() for p in self.parameters())
-        print("number of parameters: %.2fM" % (num_params / 1e6,))
+        freq_constant = 10000
+        inv_freq = 1.0 / (
+            freq_constant
+            ** (
+                torch.arange(
+                    0, self.head_dim, 2, dtype=torch.int64, device=self.device
+                ).to(torch.float32)
+                / self.head_dim
+            )
+        )
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+        self._set_cos_sin_cache(
+            seq_len=self.max_length, device=self.inv_freq.device, dtype=self.dtype
+        )
+
+    def _set_cos_sin_cache(
+        self, seq_len: int, device: torch.device, dtype: torch.dtype
+    ) -> None:
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.float32)
+
+        freqs = torch.outer(t, self.inv_freq)
+
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def rotary_emb(
+        self, x: torch.Tensor, seq_len: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype),
+            self.sin_cached[:seq_len].to(dtype=x.dtype),
+        )
+
+    @classmethod
+    def rotate_half(cls, x: torch.Tensor) -> torch.Tensor:
+        x1 = x[..., : x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2 :]
+        return torch.cat((-x2, x1), dim=-1)
+
+    @classmethod
+    def apply_rotary_pos_emb(
+        cls,
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor,
+        position_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        cos = cos[position_ids].unsqueeze(1)
+        sin = sin[position_ids].unsqueeze(1)
+        x_embed = (x * cos) + (cls.rotate_half(x) * sin)
+        return x_embed
 
     def forward_for_testing(
         self, x: torch.Tensor, return_hidden_state: bool = False
@@ -72,10 +129,9 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             k = layer.attn.k_norm(k)
 
             # apply rotary embedding
-            q, k = layer.attn.pos_embedding(q, k)
-            # cos, sin = self.rotary_emb(v, seq_len=l)
-            # q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
-            # k = self.apply_rotary_pos_emb(k, cos, sin, position_ids)
+            cos, sin = self.rotary_emb(v, seq_len=l)
+            q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
+            k = self.apply_rotary_pos_emb(k, cos, sin, position_ids)
 
             k = k.repeat_interleave(self.num_gqa_groups, dim=1)
             v = v.repeat_interleave(self.num_gqa_groups, dim=1)

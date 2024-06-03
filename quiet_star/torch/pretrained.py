@@ -154,62 +154,6 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self.betas = config.betas
         self.weight_decay = config.weight_decay
 
-        freq_constant = 10000
-        inv_freq = 1.0 / (
-            freq_constant
-            ** (
-                torch.arange(0, self.embed_dim, 2, dtype=torch.float32).to(self.device)
-                / self.embed_dim
-            )
-        )
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-
-        self._set_cos_sin_cache(
-            seq_len=self.max_length, device=self.inv_freq.device, dtype=self.dtype
-        )
-
-    def _set_cos_sin_cache(
-        self, seq_len: int, device: torch.device, dtype: torch.dtype
-    ) -> None:
-        self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.float32)
-
-        freqs = torch.outer(t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
-        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
-
-    def rotary_emb(
-        self, x: torch.Tensor, seq_len: int
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        return (
-            self.cos_cached[:seq_len].to(dtype=x.dtype),
-            self.sin_cached[:seq_len].to(dtype=x.dtype),
-        )
-
-    @classmethod
-    def rotate_half(cls, x: torch.Tensor) -> torch.Tensor:
-        x1 = x[..., : x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2 :]
-        return torch.cat((-x2, x1), dim=-1)
-
-    @classmethod
-    def apply_rotary_pos_emb(
-        cls,
-        x: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor,
-        position_ids: torch.Tensor,
-    ) -> torch.Tensor:
-        cos = cos[position_ids]
-        sin = sin[position_ids]
-        x_embed = (x * cos) + (cls.rotate_half(x) * sin)
-        return x_embed
-
     @abc.abstractmethod
     def forward(
         self, x: torch.Tensor, return_hidden_state: bool = False
