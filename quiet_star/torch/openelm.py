@@ -316,14 +316,10 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             residual = x
             x = layer.attn_norm(x)
 
+            total_heads = 2 * self.num_kv_heads[i] + self.num_query_heads[i]
             qkv = (
                 layer.attn.qkv_proj(x)
-                .reshape(
-                    b * l,
-                    m,
-                    2 * self.num_kv_heads[i] + self.num_query_heads[i],
-                    self.head_dim,
-                )
+                .reshape(b * l, m, total_heads, self.head_dim)
                 .permute([0, 2, 1, 3])
             )
             q, k, v = qkv.split(
@@ -334,13 +330,8 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             q = layer.attn.q_norm(q)
             k = layer.attn.k_norm(k)
 
-            q = q.reshape(b * l, self.num_query_heads[i], m, self.head_dim)
-            k1 = (
-                k[:, :, :1]
-                .reshape(b * l, self.num_kv_heads[i], 1, self.head_dim)
-                .repeat(1, 1, l, 1)
-            )
-            k2 = k[:, :, 1:].reshape(b * l, self.num_kv_heads[i], m - 1, self.head_dim)
+            k1 = k[:, :, :1].repeat(1, 1, l, 1)
+            k2 = k[:, :, 1:]
             v1 = (
                 v[:, :, :1]
                 .reshape(b, l, self.num_kv_heads[i], 1, self.head_dim)
@@ -348,7 +339,7 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
                 .repeat(1, l, 1, 1, 1)
                 .reshape(b * l, self.num_kv_heads[i], l, self.head_dim)
             )
-            v2 = v[:, :, 1:].reshape(b * l, self.num_kv_heads[i], m - 1, self.head_dim)
+            v2 = v[:, :, 1:]
 
             # apply rotary embedding
             cos, sin = self.rotary_emb(v1, seq_len=l + m)
@@ -358,8 +349,6 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             k_position_ids = position_ids.tile(1, self.num_kv_heads[i], 1).reshape(
                 b * l, self.num_kv_heads[i], m
             )
-            if i == 0:
-                print("q_position_ids:", q_position_ids.shape, q_position_ids)
             q = self.apply_rotary_pos_emb(q, cos, sin, q_position_ids)
             k1 = self.apply_rotary_pos_emb(k1, cos, sin, k_position_ids[:, :, :1])
             k2 = self.apply_rotary_pos_emb(k2, cos, sin, k_position_ids[:, :, 1:])
@@ -410,10 +399,134 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
         t: int,
         activation_cache: list[dict[str, torch.Tensor]] | None = None,
     ) -> tuple[torch.Tensor, list[dict[str, torch.Tensor]]]:
+        b, l, d = x.shape
+
         if activation_cache is None:
             activation_cache = [{} for _ in range(len(self.layers))]
 
-        return x, activation_cache
+        causal_mask1 = torch.triu(
+            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
+            diagonal=1,
+        )
+        causal_mask1 = expand_dims(causal_mask1, (0, 1, 3))
+        causal_mask2 = torch.triu(
+            torch.full(
+                (t + 1, t + 1), float("-inf"), dtype=self._dtype, device=self.device
+            ),
+            diagonal=1,
+        )
+        causal_mask2 = expand_dims(causal_mask2[t - d + 1 :, 1:], (0, 1, 2))
+
+        causal_mask1 = causal_mask1.repeat(b, 1, 1, causal_mask2.size(3), 1)
+        causal_mask2 = causal_mask2.repeat(b, 1, causal_mask1.size(2), 1, 1)
+        causal_mask = (
+            torch.concatenate([causal_mask1, causal_mask2], dim=-1)
+            .swapaxes(1, 2)
+            .reshape(b * l, 1, d, t + l)
+            .contiguous()
+        )
+
+        row = torch.arange(0, d, dtype=torch.int64, device=self.device).reshape(1, d)
+        offset = torch.arange(
+            t - d + 1, l + t - d + 1, dtype=torch.int64, device=self.device
+        ).reshape(l, 1)
+        position_ids = (
+            (row + offset)
+            .reshape(1, l, d)
+            .tile((b, 1, 1))
+            .reshape(b * l, 1, d)
+            .contiguous()
+        )
+
+        x = x.reshape(b * l, d)
+        x = self.tok_emb(x)
+
+        for i, layer in enumerate(self.layers):
+            residual = x
+            x = layer.attn_norm(x)
+            cos, sin = self.rotary_emb(x, seq_len=l + t + 1)
+            q_position_ids = position_ids.tile(1, self.num_query_heads[i], 1).reshape(
+                b * l, self.num_query_heads[i], d
+            )
+            k_position_ids = position_ids.tile(1, self.num_kv_heads[i], 1).reshape(
+                b * l, self.num_kv_heads[i], d
+            )
+            total_heads = 2 * self.num_kv_heads[i] + self.num_query_heads[i]
+            qkv = (
+                layer.attn.qkv_proj(x)
+                .reshape(b * l, d, total_heads, self.head_dim)
+                .permute([0, 2, 1, 3])
+            )
+            q, k, v = qkv.split(
+                [self.num_query_heads[i], self.num_kv_heads[i], self.num_kv_heads[i]],
+                dim=1,
+            )
+
+            q = layer.attn.q_norm(q)
+            k = layer.attn.k_norm(k)
+
+            if activation_cache[i]:
+                q = self.apply_rotary_pos_emb(q, cos, sin, q_position_ids)
+                k = self.apply_rotary_pos_emb(k, cos, sin, k_position_ids)
+                k = torch.concatenate([activation_cache[i]["k"], k], dim=-2)
+                v = torch.concatenate([activation_cache[i]["v"], v], dim=-2)
+            else:
+                k1 = k[:, :, :1].repeat(1, 1, l, 1)
+                k2 = k[:, :, 1:]
+                v1 = (
+                    v[:, :, :1]
+                    .reshape(b, l, self.num_kv_heads[i], 1, self.head_dim)
+                    .swapaxes(1, 3)
+                    .repeat(1, l, 1, 1, 1)
+                    .reshape(b * l, self.num_kv_heads[i], l, self.head_dim)
+                )
+                v2 = v[:, :, 1:]
+
+                # apply rotary embedding
+                q = self.apply_rotary_pos_emb(q, cos, sin, q_position_ids)
+                k1 = self.apply_rotary_pos_emb(k1, cos, sin, k_position_ids[:, :, :1])
+                k2 = self.apply_rotary_pos_emb(k2, cos, sin, k_position_ids[:, :, 1:])
+
+                k1 = (
+                    k1.reshape(b, l, self.num_kv_heads[i], l, self.head_dim)
+                    .transpose(1, 3)
+                    .reshape(b * l, self.num_kv_heads[i], l, self.head_dim)
+                )
+
+                k = torch.concatenate([k1, k2], dim=-2)
+                v = torch.concatenate([v1, v2], dim=-2)
+
+            activation_cache[i]["k"] = k
+            activation_cache[i]["v"] = v
+
+            k = k.repeat_interleave(self.num_gqa_groups, dim=1)
+            v = v.repeat_interleave(self.num_gqa_groups, dim=1)
+
+            layer_causal_mask = causal_mask.repeat(
+                1, self.num_kv_heads[i], 1, 1
+            ).repeat_interleave(self.num_gqa_groups, dim=1)
+            a = torch.nn.functional.softmax(
+                (torch.matmul(q, k.transpose(-2, -1)) + layer_causal_mask)
+                / math.sqrt(q.size(-1)),
+                dim=-1,
+            )
+
+            attn_out = torch.matmul(a, v)
+            attn_out = layer.attn.out_proj(
+                attn_out.reshape(b * l, self.num_query_heads[i], d, self.head_dim)
+                .permute([0, 2, 1, 3])
+                .reshape(b * l, d, self.num_query_heads[i] * self.head_dim)
+            )
+            x = residual + attn_out
+            x = x + layer.ffn(layer.ffn_norm(x))
+
+        # (B * L, M, E) before reshaping
+        h = self.ln(x).reshape(b, l, d, -1)
+        logits = self.lm_head(h)
+
+        assert activation_cache is not None
+
+        return logits, activation_cache
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         decay = []

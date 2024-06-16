@@ -6,6 +6,7 @@ import torch
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import START_THOUGHT_TOKEN
 from quiet_star.torch.gpt import GPTModel
+from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.qwen import QwenThoughtModel
 from quiet_star.torch.qwen_explicit import QwenExplicitThoughtModel
 
@@ -191,4 +192,24 @@ def test_qwen_explicit_thought_generation() -> None:
         ),
     )
     model = QwenExplicitThoughtModel(config).to(config.model.device)
+    run_thought_generation_test(model, config)
+
+
+def test_openelm_thought_generation() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=2,
+        thought_length=3,
+        model=ModelConfig(
+            attn_type="torch",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            dtype="float32",
+            model_name="apple/OpenELM-270M-Instruct",
+            tokenizer_name="meta-llama/Llama-2-7b-hf",
+            max_length=32,
+        ),
+    )
+    model = OpenELMThoughtModel(config).to(config.model.device)
     run_thought_generation_test(model, config)
