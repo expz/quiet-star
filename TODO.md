@@ -27,9 +27,9 @@
 
 ## Adding OpenELM
 - [x] reproduce openelm model's forward pass with manually written code
-- [ ] convert logits without thoughts to work with openELM
-- [ ] convert thought generation to work with openELM
-- [ ] convert hidden state generation to work with openELM
+- [x] convert logits without thoughts to work with openELM
+- [x] convert thought generation to work with openELM
+- [x] convert hidden state generation to work with openELM
 
 ## Evaluation
 - [ ] add generation function
