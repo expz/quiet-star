@@ -3,6 +3,7 @@ import torch
 
 from quiet_star.config import Config, ModelConfig
 from quiet_star.torch.gpt import GPTModel
+from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.qwen import QwenThoughtModel
 
 
@@ -44,8 +45,8 @@ def test_gpt_training_step() -> None:
     run_training_step_test(model, config)
 
 
-def test_pretrained_training_step() -> None:
-    device = "cpu"  # "cuda" if torch.cuda.is_available() else "cpu"
+def test_qwen_training_step() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     config = Config(
         batch_size=1,
         thought_length=3,
@@ -60,4 +61,24 @@ def test_pretrained_training_step() -> None:
         ),
     )
     model = QwenThoughtModel(config).to(config.model.device)
+    run_training_step_test(model, config)
+
+
+def test_openelm_training_step() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=1,
+        thought_length=3,
+        lookahead_tokens=4,
+        model=ModelConfig(
+            attn_type="torch",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            model_name="apple/OpenELM-270M-Instruct",
+            tokenizer_name="meta-llama/Llama-2-7b-hf",
+            max_length=32,
+        ),
+    )
+    model = OpenELMThoughtModel(config).to(config.model.device)
     run_training_step_test(model, config)

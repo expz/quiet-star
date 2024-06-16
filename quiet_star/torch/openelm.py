@@ -168,10 +168,25 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
     def forward(
         self, x: torch.Tensor, return_hidden_state: bool = False
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        result = self.model(x, output_attentions=False, output_hidden_states=True)
+        b, l = x.shape
+
+        causal_mask = torch.triu(
+            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
+            diagonal=1,
+        )
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(1).tile((b, 1, 1, 1))
+
+        x = self.tok_emb(x)
+        for layer in self.layers:
+            x = layer(x, attention_mask=causal_mask)[
+                0
+            ]  # the layers return a tuple with a single element
+        h = self.ln(x)
+        logits = self.lm_head(h)
+
         if return_hidden_state:
-            return result.logits, result.hidden_states[-1]
-        return result.logits
+            return logits, h
+        return logits
 
     def hidden_states_if_attn_mask_were_preserved(
         self, x: torch.Tensor

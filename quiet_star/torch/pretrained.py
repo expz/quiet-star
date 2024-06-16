@@ -53,6 +53,10 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         ), f"attempted to add 2 tokens but {num_added_tokens} were added"
 
         self.pad_token_id = self.tokenizer.pad_token_id
+        if self.pad_token_id is None:
+            self.pad_token_id = self.tokenizer.bos_token_id
+            self.tokenizer.pad_token_id = self.tokenizer.bos_token_id
+            self.tokenizer.pad_token = self.tokenizer.bos_token
         self.start_thought_token_id = self.tokenizer(
             START_THOUGHT_TOKEN, return_attention_mask=False
         )["input_ids"][

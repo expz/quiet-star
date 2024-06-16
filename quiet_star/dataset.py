@@ -64,6 +64,7 @@ def to_mlx(samples: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
 
 def get_open_web_math_dataset(
     tokenizer: AutoTokenizer,
+    tokenizer_name: str,
     max_length: int,
     file_count: int = 1,
     max_samples: int = 2048,
@@ -71,7 +72,9 @@ def get_open_web_math_dataset(
     tensor_type: str = "torch",
     use_local_cache: bool = True,
 ) -> torch.utils.data.Dataset:
-    cache_path = os.path.join(DATASET_LOCAL_PATH, str(max_length), tensor_type)
+    cache_path = os.path.join(
+        DATASET_LOCAL_PATH, tokenizer_name, str(max_length), tensor_type
+    )
     if use_local_cache:
         try:
             split_dataset = datasets.load_from_disk(cache_path)

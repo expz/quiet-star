@@ -6,10 +6,15 @@ from lightning.pytorch.callbacks import RichProgressBar
 from quiet_star.config import Config
 from quiet_star.dataset import get_open_web_math_dataset
 from quiet_star.torch.gpt import GPTModel
+from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.qwen import QwenThoughtModel
 
 # Properly utilize tensor cores
 torch.set_float32_matmul_precision("medium")
+
+
+def _format_tokenizer_name(tokenizer_name: str) -> str:
+    return tokenizer_name.replace("/", "_").lower()
 
 
 def _train(
@@ -17,6 +22,7 @@ def _train(
 ) -> lightning.LightningModule:
     dataset = get_open_web_math_dataset(
         model.tokenizer,
+        _format_tokenizer_name(config.model.tokenizer_name),
         config.model.max_length,
         2,
         config.max_samples,
@@ -31,7 +37,7 @@ def _train(
 
     trainer = lightning.pytorch.Trainer(
         deterministic=True,
-        accelerator="gpu",
+        accelerator="cpu" if config.model.device == "cpu" else "gpu",
         max_epochs=config.epochs,
         callbacks=[RichProgressBar(leave=True)],
     )
@@ -53,5 +59,13 @@ def train_qwen(config: Config) -> QwenThoughtModel:
     lightning.pytorch.seed_everything(config.seed, workers=True)
 
     model = QwenThoughtModel(config)
+
+    return _train(config, model)
+
+
+def train_openelm(config: Config) -> OpenELMThoughtModel:
+    lightning.pytorch.seed_everything(config.seed, workers=True)
+
+    model = OpenELMThoughtModel(config)
 
     return _train(config, model)
