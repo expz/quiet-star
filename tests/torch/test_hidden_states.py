@@ -6,6 +6,7 @@ import torch
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.torch.gpt import GPTModel
+from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.qwen import QwenThoughtModel
 from quiet_star.torch.qwen_explicit import QwenExplicitThoughtModel
 from quiet_star.torch.utils import torch_dtype
@@ -30,9 +31,21 @@ def prepare_test_inputs(
     lookahead_length: int,
 ) -> tuple[list[list[int]], list[list[int]]]:
     x = tokenize(model, config, text)
-    start_thought_token = tokenize(model, config, START_THOUGHT_TOKEN)[0]
-    end_thought_token = tokenize(model, config, END_THOUGHT_TOKEN)[0]
+    start_thought_tokens = tokenize(model, config, START_THOUGHT_TOKEN)
+    end_thought_tokens = tokenize(model, config, END_THOUGHT_TOKEN)
+    start_thought_token = (
+        start_thought_tokens[1]
+        if start_thought_tokens[0] == model.tokenizer.bos_token_id
+        else start_thought_tokens[0]
+    )
+    end_thought_token = (
+        end_thought_tokens[1]
+        if end_thought_tokens[0] == model.tokenizer.bos_token_id
+        else end_thought_tokens[0]
+    )
     pad_token = model.tokenizer.pad_token_id
+    if pad_token is None:
+        pad_token = model.tokenizer.bos_token_id
     x1 = [
         x[:i]
         + [start_thought_token]
@@ -71,8 +84,6 @@ def run_hidden_states_test(model: lightning.LightningModule, config: Config) -> 
         i1, i2 = prepare_test_inputs(
             model, config, text, config.thought_length, config.lookahead_tokens
         )
-        print("i1:", i1)
-        print("i2:", i2)
         l1.append(i1)
         l2.append(i2)
 
@@ -180,4 +191,25 @@ def test_qwen_explicit_hidden_states() -> None:
         ),
     )
     model = QwenExplicitThoughtModel(config).to(config.model.device)
+    run_hidden_states_test(model, config)
+
+
+def test_openelm_hidden_states() -> None:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        batch_size=2,
+        lookahead_tokens=3,
+        thought_length=3,
+        model=ModelConfig(
+            attn_type="torch",
+            dtype="float32",
+            device=device,
+            dropout_attn=0.0,
+            dropout_embed=0.0,
+            model_name="apple/OpenELM-270M-Instruct",
+            tokenizer_name="meta-llama/Llama-2-7b-hf",
+            max_length=32,
+        ),
+    )
+    model = OpenELMThoughtModel(config).to(config.model.device)
     run_hidden_states_test(model, config)

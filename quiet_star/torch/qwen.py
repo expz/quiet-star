@@ -121,8 +121,7 @@ class QwenThoughtModel(PretrainedThoughtModel):
         offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
         position_ids = (
             (row + offset)
-            .reshape((1, l, m))
-            .unsqueeze(1)
+            .reshape(1, 1, l, m)
             .tile((b, self.num_heads, 1, 1))
             .reshape(b, self.num_heads * l, m)
             .contiguous()
