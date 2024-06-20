@@ -5,6 +5,7 @@ import torch
 import torch.nn
 import torch.utils.data
 from transformers import AutoConfig
+from transformers.cache_utils import DynamicCache
 
 from quiet_star.config import Config
 from quiet_star.torch.pretrained import PretrainedThoughtModel
@@ -107,33 +108,67 @@ class QwenExplicitThoughtModel(PretrainedThoughtModel):
         return logits
 
     def forward(
-        self, x: torch.Tensor, return_hidden_state: bool = False
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        # result = self.model(x, output_attentions=True, output_hidden_states=True)
-        # if return_hidden_state:
-        #     return result.logits, result.hidden_states[-1]
-        # return result.logits
-
+        self,
+        x: torch.Tensor,
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        return_hidden_state: bool = False,
+        return_key_value_cache: bool = False,
+    ) -> (
+        torch.Tensor
+        | tuple[torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
+        | tuple[torch.Tensor, torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
+    ):
         b, l = x.shape
 
+        true_l = l
+        if key_value_cache is not None:
+            true_l += key_value_cache[0][0].shape[-2]
+
         causal_mask = torch.triu(
-            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
+            torch.full(
+                (true_l, true_l), float("-inf"), dtype=self._dtype, device=self.device
+            ),
             diagonal=1,
+        )[-l:, :]
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(1).repeat((b, 1, 1, 1))
+
+        position_ids = (
+            torch.arange(true_l - l, true_l, dtype=torch.int64, device=self.device)
+            .unsqueeze(0)
+            .repeat([b, 1])
         )
-        causal_mask = causal_mask.unsqueeze(0).unsqueeze(1).tile((b, 1, 1, 1))
+
+        use_cache = key_value_cache or return_key_value_cache
+        if return_key_value_cache:
+            new_key_value_cache = []
+        past_key_values = (
+            DynamicCache.from_legacy_cache(key_value_cache) if use_cache else None
+        )
 
         x = self.tok_emb(x)
-        attns = []
-        for layer in self.layers:
-            x, attn = layer(
-                x, attention_mask=causal_mask, output_attentions=True
-            )  # the layers return a tuple with a single element
-            attns.append(attn)
+        for i, layer in enumerate(self.layers):
+            print("x:", x.shape)
+            result = layer(
+                x,
+                attention_mask=causal_mask,
+                position_ids=position_ids,
+                past_key_value=past_key_values,
+                use_cache=use_cache,
+            )
+            x = result[0]
+            if return_key_value_cache:
+                new_key_value_cache.append(result[1][i])
+
         h = self.ln(x)
         logits = self.lm_head(h)
 
         if return_hidden_state:
+            if return_key_value_cache:
+                return logits, h, new_key_value_cache
             return logits, h
+        if return_key_value_cache:
+            return logits, new_key_value_cache
         return logits
 
     @classmethod

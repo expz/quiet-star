@@ -7,7 +7,7 @@ This implementation is optimized so that it performs a minimal amount of computa
 See TODO.md for planned improvements.
 
 ## Usage
-To set up the environment:
+To set up the environment (if you do not have poetry installed, see appendix):
 ```bash
 poetry config keyring.enabled false
 poetry install
@@ -41,3 +41,14 @@ Before committing:
 pytest
 ```
 
+## Appendix: Installing Poetry
+
+```bash
+# If you do not have virtualenv installed yet
+pip install virtualenv
+
+# Create a virtual environment with Python 3.10 called .venv and install poetry
+virtualenv --python=/usr/bin/python3.10 .venv
+source .venv/bin/activate
+pip install poetry
+```

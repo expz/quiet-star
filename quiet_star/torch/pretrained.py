@@ -160,8 +160,17 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
     @abc.abstractmethod
     def forward(
-        self, x: torch.Tensor, return_hidden_state: bool = False
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        self,
+        x: torch.Tensor,
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        return_hidden_state: bool = False,
+        return_key_value_cache: bool = False,
+    ) -> (
+        torch.Tensor
+        | tuple[torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
+        | tuple[torch.Tensor, torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
+    ):
         pass
 
     @abc.abstractmethod
@@ -301,7 +310,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         assert_shape(targets, (b, lp, a))
 
         # Calculate logits without thoughts
-        logits, h = self.forward(inputs, return_hidden_state=True)
+        logits, h = self.forward(inputs, return_hidden_state=True)  # type: ignore
         assert_shape(logits, (b, l, v))
         assert_shape(h, (b, l, e))
         h = self.shift_and_stack(h, offset_max, self.lookahead_tokens)

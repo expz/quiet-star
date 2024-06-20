@@ -19,6 +19,7 @@
 - [x] convert LM head to work with pretrained Huggingface model
 - [x] convert mixing head to work with pretrained Huggingface model
 - [ ] speed up training by using flash attention
+- [ ] speed up training by adding hidden state generation to generate_thoughts() function
 
 ## Housekeeping
 - [ ] Remove code duplication between `hidden_states()` and `generate_next_thought_token()`
