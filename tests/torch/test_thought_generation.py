@@ -168,7 +168,7 @@ def test_qwen_thought_generation() -> None:
             dropout_attn=0.0,
             dropout_embed=0.0,
             dtype="float32",
-            model_name="Qwen/Qwen1.5-0.5B-Chat",
+            model_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )
@@ -187,7 +187,7 @@ def test_qwen_explicit_thought_generation() -> None:
             dropout_attn=0.0,
             dropout_embed=0.0,
             dtype="float32",
-            model_name="Qwen/Qwen1.5-0.5B-Chat",
+            model_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )

@@ -111,8 +111,8 @@ def test_qwen_explicit_forward() -> None:
             device=device,
             dropout_attn=0.0,
             dropout_embed=0.0,
-            model_name="Qwen/Qwen1.5-0.5B",
-            tokenizer_name="Qwen/Qwen1.5-0.5B",
+            model_name="Qwen/Qwen2-0.5B-Instruct",
+            tokenizer_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )
@@ -158,8 +158,8 @@ def test_qwen_forward_with_key_value_cache() -> None:
             device=device,
             dropout_attn=0.0,
             dropout_embed=0.0,
-            model_name="Qwen/Qwen1.5-0.5B",
-            tokenizer_name="Qwen/Qwen1.5-0.5B",
+            model_name="Qwen/Qwen2-0.5B-Instruct",
+            tokenizer_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )

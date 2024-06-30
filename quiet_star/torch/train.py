@@ -8,6 +8,7 @@ from quiet_star.dataset import get_open_web_math_dataset
 from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.qwen import QwenThoughtModel
+from quiet_star.torch.qwen_explicit import QwenExplicitThoughtModel
 
 # Properly utilize tensor cores
 torch.set_float32_matmul_precision("medium")
@@ -59,6 +60,14 @@ def train_qwen(config: Config) -> QwenThoughtModel:
     lightning.pytorch.seed_everything(config.seed, workers=True)
 
     model = QwenThoughtModel(config)
+
+    return _train(config, model)
+
+
+def train_qwen_explicit(config: Config) -> QwenExplicitThoughtModel:
+    lightning.pytorch.seed_everything(config.seed, workers=True)
+
+    model = QwenExplicitThoughtModel(config)
 
     return _train(config, model)
 

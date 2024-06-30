@@ -6,7 +6,7 @@ from transformers import AutoConfig
 from transformers.cache_utils import DynamicCache
 
 from quiet_star.config import Config
-from quiet_star.torch.pretrained import PretrainedThoughtModel
+from quiet_star.torch.pretrained import ForwardResult, PretrainedThoughtModel
 from quiet_star.torch.utils import expand_dims
 
 
@@ -169,15 +169,11 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
     def forward(
         self,
         x: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
         key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         return_hidden_state: bool = False,
         return_key_value_cache: bool = False,
-    ) -> (
-        torch.Tensor
-        | tuple[torch.Tensor, torch.Tensor]
-        | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
-        | tuple[torch.Tensor, torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
-    ):
+    ) -> ForwardResult:
         b, l = x.shape
 
         true_l = l
@@ -195,14 +191,12 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
         )
 
         use_cache = key_value_cache or return_key_value_cache
-        if return_key_value_cache:
-            new_key_value_cache = []
         past_key_values = (
             DynamicCache.from_legacy_cache(key_value_cache) if use_cache else None
         )
 
         x = self.tok_emb(x)
-        for i, layer in enumerate(self.layers):
+        for layer in self.layers:
             result = layer(
                 x,
                 attention_mask=causal_mask,
@@ -210,114 +204,20 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
                 use_cache=use_cache,
             )
             x = result[0]
-            if return_key_value_cache:
-                new_key_value_cache.append(result[1][i])
+
+        if return_key_value_cache:
+            new_key_value_cache = result[1]
 
         h = self.ln(x)
         logits = self.lm_head(h)
 
         if return_hidden_state:
             if return_key_value_cache:
-                return logits, h, new_key_value_cache
-            return logits, h
+                return ForwardResult(logits, h, new_key_value_cache)
+            return ForwardResult(logits, h, None)
         if return_key_value_cache:
-            return logits, new_key_value_cache
-        return logits
-
-    def hidden_states_if_attn_mask_were_preserved(
-        self, x: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        This implementation shows how to implement the function with only
-        calls to the standard model interface.
-
-        OpenELM does not respect the attention mask we pass it, so this
-        implementation will not work, but we keep it around in case we
-        eventually move to a different model that does respect the mask.
-        """
-        # x is (B, L, M = 1 + T + 2 + D)
-        b, l, m = x.shape
-
-        x_init = x[:, :, :1].transpose(1, 2).reshape(b, l)
-
-        init_causal_mask = torch.triu(
-            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
-            diagonal=1,
-        )
-        init_causal_mask = expand_dims(init_causal_mask, (0, 1)).repeat(b, 1, 1, 1)
-        init_position_ids = (
-            torch.arange(0, l, dtype=torch.int64, device=self.device)
-            .reshape(1, l)
-            .repeat(b, 1)
-        )
-
-        result = self.model(
-            x_init,
-            attention_mask=init_causal_mask,
-            position_ids=init_position_ids,
-            output_attentions=False,
-            output_hidden_states=False,
-            use_cache=True,
-        )
-
-        past_key_values = tuple(
-            (key.tile(l, 1, 1, 1), value.tile(l, 1, 1, 1))
-            for key, value in result.past_key_values
-        )
-
-        causal_mask1 = torch.triu(
-            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
-            diagonal=1,
-        )
-        causal_mask1 = expand_dims(causal_mask1, (0, 1, 3))
-        causal_mask2 = torch.triu(
-            torch.full(
-                (m - 1, m - 1), float("-inf"), dtype=self._dtype, device=self.device
-            ),
-            diagonal=1,
-        )
-        causal_mask2 = expand_dims(causal_mask2, (0, 1, 2))
-
-        causal_mask1 = causal_mask1.repeat(b, 1, 1, causal_mask2.size(3), 1)
-        causal_mask2 = causal_mask2.repeat(b, 1, causal_mask1.size(2), 1, 1)
-        causal_mask = (
-            torch.concatenate([causal_mask1, causal_mask2], dim=-1)
-            .transpose(1, 2)
-            .reshape(b * l, 1, causal_mask1.size(3), -1)
-            .contiguous()
-        )
-
-        row0 = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(1, l)
-        position_ids0 = row0.tile((b * l, 1)).contiguous()
-        row = torch.arange(1, m, dtype=torch.int64, device=self.device).reshape(
-            1, m - 1
-        )
-        offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
-        position_ids = (
-            (row + offset)
-            .reshape((1, l, m - 1))
-            .tile((b, 1, 1))
-            .reshape(b * l, m - 1)
-            .contiguous()
-        )
-        position_ids = torch.concatenate([position_ids0, position_ids], dim=-1)
-
-        x2 = x[:, :, 1:].reshape(b * l, m - 1)
-
-        result = self.model(
-            x2,
-            attention_mask=causal_mask,
-            position_ids=position_ids,
-            past_key_values=past_key_values,
-            output_attentions=False,
-            output_hidden_states=True,
-        )
-
-        h = result.hidden_states[-1]
-        h = h.reshape(b, l, h.size(1), h.size(2))
-        h = h[:, :, -(self.lookahead_tokens + 1) : -1]
-
-        return h
+            return ForwardResult(logits, None, new_key_value_cache)
+        return ForwardResult(logits, None, None)
 
     def hidden_states(self, x: torch.Tensor) -> torch.Tensor:
         # x is (B, L, M = 1 + T + 2 + D)

@@ -166,7 +166,7 @@ def test_qwen_hidden_states() -> None:
             dropout_attn=0.0,
             dropout_embed=0.0,
             dtype="float32",
-            model_name="Qwen/Qwen1.5-0.5B-Chat",
+            model_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )
@@ -186,7 +186,7 @@ def test_qwen_explicit_hidden_states() -> None:
             dropout_attn=0.0,
             dropout_embed=0.0,
             dtype="float32",
-            model_name="Qwen/Qwen1.5-0.5B-Chat",
+            model_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )

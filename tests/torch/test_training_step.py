@@ -56,7 +56,7 @@ def test_qwen_training_step() -> None:
             device=device,
             dropout_attn=0.0,
             dropout_embed=0.0,
-            model_name="Qwen/Qwen1.5-0.5B-Chat",
+            model_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )

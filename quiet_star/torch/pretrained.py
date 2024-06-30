@@ -1,4 +1,5 @@
 import abc
+from typing import NamedTuple
 
 import lightning
 import lightning.pytorch
@@ -12,6 +13,12 @@ from transformers.modeling_utils import PreTrainedModel
 from quiet_star.config import Config
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.torch.utils import assert_shape, torch_dtype
+
+
+class ForwardResult(NamedTuple):
+    logits: torch.Tensor
+    hidden_state: torch.Tensor | None
+    key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None
 
 
 class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
@@ -162,15 +169,11 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
     def forward(
         self,
         x: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
         key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         return_hidden_state: bool = False,
         return_key_value_cache: bool = False,
-    ) -> (
-        torch.Tensor
-        | tuple[torch.Tensor, torch.Tensor]
-        | tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
-        | tuple[torch.Tensor, torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]
-    ):
+    ) -> ForwardResult:
         pass
 
     @abc.abstractmethod
@@ -232,8 +235,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                 thought_logits = torch.concatenate(
                     [thought_logits, logits[:, :, -1:]], dim=2
                 )
-            next_tokens = self.sample_next_tokens(logits[:, :, -1])
-            next_tokens = torch.unsqueeze(next_tokens, -1)
+            next_tokens = self.sample_next_token(logits[:, :, -1])
             x = torch.concatenate([x, next_tokens], dim=-1)
 
         # (B, L, 1 + T + 2 + A)
@@ -249,11 +251,60 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         w = self.mixing_mlp(x)
         return w
 
-    def sample_next_tokens(
-        self, logits: torch.Tensor, temp: float = 1.0
+    @staticmethod
+    def sample_next_token(
+        logits: torch.Tensor,
+        do_sample: bool = False,
+        top_k: float | None = None,
+        top_p: float | None = None,
+        temp: float = 1.0,
+        suppress: list[int] = [],
     ) -> torch.Tensor:
-        logits = logits / temp
-        return torch.distributions.categorical.Categorical(logits=logits).sample()
+        """
+        Samples a token from the logits output by a language model.
+
+        Args:
+            logits: The logits output by the language model.
+            top_k: The number of top tokens to consider. If None, all tokens are considered.
+            top_p: The probability mass to consider. If None, all tokens are considered.
+            temperature: The temperature to apply to the logits.
+
+        Returns:
+            The sampled token.
+        """
+
+        if suppress:
+            for s in suppress:
+                logits[..., s] = float("-inf")
+
+        if do_sample:
+            # Apply temperature
+            logits = logits / temp
+
+            # Top-k sampling
+            if top_k is not None:
+                k_values, k_indices = torch.topk(logits, top_k, dim=-1)
+                masked_logits = torch.ones_like(logits) * float("-inf")
+                masked_logits = masked_logits.scatter_(-1, k_indices, k_values)
+
+            # Top-p sampling
+            if top_p is not None:
+                probs = F.softmax(logits, dim=-1)
+                sorted_probs, sorted_indices = torch.sort(
+                    probs, dim=-1, descending=True
+                )
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                mask = cumulative_probs - sorted_probs > top_p
+                sorted_probs[mask] = 0.0
+                probs = torch.zeros_like(probs).scatter_(
+                    -1, sorted_indices, sorted_probs
+                )
+                masked_logits = torch.log(probs)
+
+            # Sample from the distribution
+            return torch.distributions.categorical.Categorical(logits=logits).sample()
+
+        return torch.argmax(logits, dim=-1, keepdim=True)
 
     @staticmethod
     def shift_and_stack(
@@ -310,7 +361,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         assert_shape(targets, (b, lp, a))
 
         # Calculate logits without thoughts
-        logits, h = self.forward(inputs, return_hidden_state=True)  # type: ignore
+        logits, h, _ = self.forward(inputs, return_hidden_state=True)  # type: ignore
         assert_shape(logits, (b, l, v))
         assert_shape(h, (b, l, e))
         h = self.shift_and_stack(h, offset_max, self.lookahead_tokens)
@@ -387,6 +438,240 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         return total_loss
 
+    def generate_token(
+        self,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        do_sample: bool = False,
+        top_k: float | None = None,
+        top_p: float | None = None,
+        temp: float = 1.0,
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+        # generate a first thought token and save the key value cache
+        logits, _, key_value_cache = self.forward(
+            x,
+            attention_mask=attention_mask,
+            key_value_cache=key_value_cache,
+            return_key_value_cache=True,
+        )
+        assert key_value_cache is not None
+        return (
+            self.sample_next_token(
+                logits[:, -1, :],
+                do_sample,
+                top_k,
+                top_p,
+                temp,
+                suppress=[self.start_thought_token_id, self.end_thought_token_id],
+            ),
+            key_value_cache,
+        )
+
+    def generate_thoughtful_token(
+        self,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor,
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        do_sample: bool = False,
+        top_k: float | None = None,
+        top_p: float | None = None,
+        temp: float = 1.0,
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+        """
+        Generate a thought and then a token, returning just the token.
+
+        This method takes an input sequence of shape (batch_size, sequence_length)
+        and generates a thought sequence using the model's `forward` method. It
+        then samples a token from the distribution of the last token in the thought
+        sequence.
+
+        Args:
+            x: The input sequence of tokens.
+            do_sample: Whether to sample from the distribution or take the argmax.
+            top_k: The number of top tokens to consider during sampling.
+            top_p: The probability mass to consider during sampling.
+            temp: The temperature to apply to the logits during sampling.
+
+        Returns:
+            The generated tokens of shape (batch_size,).
+        """
+        b, l = x.shape
+        if key_value_cache:
+            l = key_value_cache[0][0].size(2)
+
+        start_thought_token = torch.full(
+            (b, 1),
+            self.start_thought_token_id,
+            device=x.device,
+            dtype=torch.int64,
+        )
+        end_thought_token = torch.full(
+            (b, 1),
+            self.end_thought_token_id,
+            device=x.device,
+            dtype=torch.int64,
+        )
+        x = torch.cat([x, start_thought_token], dim=1)
+
+        # generate a first thought token and save the key value cache
+        logits, _, key_value_cache = self.forward(
+            x,
+            attention_mask,
+            key_value_cache=key_value_cache,
+            return_key_value_cache=True,
+        )
+        next_token = self.sample_next_token(
+            logits[:, -1, :],
+            do_sample,
+            top_k,
+            top_p,
+            temp,
+            suppress=[self.start_thought_token_id, self.end_thought_token_id],
+        )
+
+        # sample self.thought_length - 1 more thought tokens
+        for _ in range(self.thought_length - 1):
+            logits, _, key_value_cache = self.forward(
+                next_token,
+                attention_mask,
+                key_value_cache=key_value_cache,
+                return_key_value_cache=True,
+            )
+            next_token = self.sample_next_token(
+                logits[:, -1, :],
+                do_sample,
+                top_k,
+                top_p,
+                temp,
+                suppress=[self.start_thought_token_id, self.end_thought_token_id],
+            )
+
+        # add the end thought token and generate the token to keep
+        final_tokens = torch.cat([next_token, end_thought_token], dim=1)
+        logits, _, key_value_cache = self.forward(
+            final_tokens,
+            attention_mask,
+            key_value_cache=key_value_cache,
+            return_key_value_cache=True,
+        )
+        assert key_value_cache is not None
+
+        key_value_cache = [
+            (
+                torch.cat([kvs[0][:, :, :l], kvs[0][:, :, -1:]], dim=2),
+                torch.cat([kvs[1][:, :, :l], kvs[1][:, :, -1:]], dim=2),
+            )
+            for kvs in key_value_cache
+        ]
+        print("key_value_cache:", key_value_cache[0][0].shape)
+        return (
+            self.sample_next_token(
+                logits[:, -1, :],
+                do_sample,
+                top_k,
+                top_p,
+                temp,
+                suppress=[self.start_thought_token_id, self.end_thought_token_id],
+            ),
+            key_value_cache,
+        )
+
+    def detect_final_tokens(
+        self, x: torch.Tensor, final_tokens_list: list[torch.Tensor]
+    ) -> torch.Tensor:
+        """
+        Detect which sequences in x end in a sequence of tokens given by final_tokens.
+
+        Returns:
+            A boolean tensor of shape (batch_size, 1) with True for sequences that end in
+            final_tokens and False otherwise.
+        """
+        batch_size = x.size(0)
+
+        final_token_match = torch.zeros(
+            (batch_size,), dtype=torch.bool, device=x.device
+        )
+        for final_tokens in final_tokens_list:
+            assert len(final_tokens.shape) == 1
+            final_token_count = final_tokens.size(0)
+            batch_ending = final_tokens.unsqueeze(0).repeat(batch_size, 1)
+            final_token_match = final_token_match | (
+                x[:, -final_token_count:] == batch_ending
+            ).all(dim=1)
+
+        return final_token_match
+
+    def generate(
+        self,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor,
+        max_new_tokens: int,
+        stop: list[str] = [],
+        do_sample: bool = False,
+        top_k: float | None = None,
+        top_p: float | None = None,
+        temp: float = 1.0,
+    ) -> torch.Tensor:
+        """
+        Generate new tokens using the model.
+
+        This method takes an input sequence of shape (batch_size, sequence_length) and generates
+        new tokens using the model's `generate_token` method. It continues generating
+        tokens until either `max_new_tokens` tokens have been generated or the model
+        outputs the end-of-sequence token.
+
+        Args:
+            x: The input sequence of tokens.
+            attention_mask: The attention mask for the input sequence.
+            max_new_tokens: The maximum number of new tokens to generate.
+            stop: A list of strings to stop generation at.
+            do_sample: Whether to sample from the distribution or take the argmax.
+            top_k: The number of top tokens to consider during sampling.
+            top_p: The probability mass to consider during sampling.
+            temp: The temperature to apply to the logits during sampling.
+
+        Returns:
+            The generated tokens of shape (batch_size, sequence_length + max_new_tokens).
+        """
+        stop_token_ids = [
+            self.tokenizer.encode(s, return_tensors="pt", add_special_tokens=False)[
+                0
+            ].to(x.device)
+            for s in stop
+        ]
+
+        unfinished_sequences = torch.ones(
+            (x.size(0),), device=self.device, dtype=x.dtype
+        )
+
+        x_completed = x
+        new_token = x
+        key_value_cache = None
+
+        with torch.no_grad():
+            for _ in range(max_new_tokens):
+                new_token, key_value_cache = self.generate_token(
+                    new_token,
+                    attention_mask,
+                    key_value_cache,
+                    do_sample,
+                    top_k,
+                    top_p,
+                    temp,
+                )
+                new_token = new_token * unfinished_sequences + self.pad_token_id * (
+                    1 - unfinished_sequences
+                )
+                x_completed = torch.cat([x_completed, new_token], dim=1)
+                unfinished_sequences = unfinished_sequences & ~self.detect_final_tokens(
+                    x_completed, stop_token_ids
+                )
+                if unfinished_sequences.max() == 0:
+                    break
+        print(self.tokenizer.batch_decode(x_completed))
+        return x_completed
+
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> float:
         x = batch["input_ids"][:, :-1]
         y = batch["input_ids"][:, 1:]
@@ -399,7 +684,9 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         x = batch["input_ids"][:, :-1]
         y = batch["input_ids"][:, 1:]
 
-        logits = self.forward(x)
-        loss = self.calculate_loss(logits, y)
+        with torch.no_grad():
+            logits, _, _ = self.forward(x)
+            loss = self.calculate_loss(logits, y)
+
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss

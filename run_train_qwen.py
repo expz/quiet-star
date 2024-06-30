@@ -20,8 +20,8 @@ class QwenModelConfig(ModelConfig):
     dtype: str = "bfloat16"
     embed_dim: int = 64 * 6
     max_length: int = 80
-    model_name: str = "Qwen/Qwen1.5-0.5B-Chat"
-    tokenizer_name: str = "Qwen/Qwen1.5-0.5B"
+    model_name: str = "Qwen/Qwen2-0.5B-Instruct"
+    tokenizer_name: str = "Qwen/Qwen2-0.5B-Instruct"
     num_heads: int = 6
     num_layers: int = 8
 
