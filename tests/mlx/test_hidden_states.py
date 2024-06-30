@@ -3,6 +3,8 @@ import sys
 
 import pytest
 
+from quiet_star.config import GPTConfig, GPTModelConfig
+
 try:
     import mlx.core
 
@@ -74,11 +76,11 @@ def extract_correct_hidden_states(config: Config, h1: mlx.core.array) -> mlx.cor
 
 
 def test_hidden_states() -> None:
-    config = Config(
+    config = GPTConfig(
         batch_size=2,
         lookahead_tokens=3,
         thought_length=4,
-        model=ModelConfig(
+        model=GPTModelConfig(
             attn_type="mlx",
             dropout_attn=0.0,
             dropout_embed=0.0,

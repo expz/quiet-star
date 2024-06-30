@@ -28,6 +28,8 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
 
         super().__init__(config)
 
+        self.save_hyperparameters()  # saves the argument(s) of __init__
+
         modules = dict(self.model.named_modules())
 
         self.num_kv_heads: list[int] = pretrained_config.num_kv_heads

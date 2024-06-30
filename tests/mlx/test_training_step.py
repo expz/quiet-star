@@ -2,10 +2,11 @@ import sys
 
 import pytest
 
+from quiet_star.config import GPTConfig, GPTModelConfig
+
 try:
     import mlx.core
 
-    from quiet_star.config import Config, ModelConfig
     from quiet_star.mlx.gpt import GPTModel
 except ModuleNotFoundError:
     pass
@@ -15,11 +16,11 @@ if sys.platform != "darwin":
 
 
 def test_training_step() -> None:
-    config = Config(
+    config = GPTConfig(
         batch_size=5,
         thought_length=3,
         lookahead_tokens=2,
-        model=ModelConfig(
+        model=GPTModelConfig(
             attn_type="mlx",
             dropout_attn=0.0,
             dropout_embed=0.0,

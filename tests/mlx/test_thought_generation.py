@@ -3,6 +3,8 @@ import sys
 
 import pytest
 
+from quiet_star.config import GPTConfig, GPTModelConfig
+
 try:
     import mlx.core
 
@@ -121,10 +123,10 @@ def generate_and_verify_logits(
 
 
 def test_thought_generation() -> None:
-    config = Config(
+    config = GPTConfig(
         batch_size=2,
         thought_length=3,
-        model=ModelConfig(
+        model=GPTModelConfig(
             attn_type="mlx",
             dropout_attn=0.0,
             dropout_embed=0.0,

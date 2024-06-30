@@ -25,6 +25,8 @@ class QwenThoughtModel(PretrainedThoughtModel):
 
         super().__init__(config)
 
+        self.save_hyperparameters()  # saves the argument(s) of __init__
+
         modules = dict(self.model.named_modules())
 
         self.num_kv_heads = pretrained_config.num_key_value_heads
