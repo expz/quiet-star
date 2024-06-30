@@ -11,6 +11,7 @@ from transformers import AutoTokenizer
 from quiet_star.config import Config, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.torch.attention_torch import TorchCausalSelfAttention
+from quiet_star.torch.pretrained import ForwardResult
 from quiet_star.torch.utils import assert_shape, expand_dims, torch_dtype
 
 try:
@@ -243,7 +244,7 @@ class GPTModel(lightning.LightningModule):
 
     def forward(
         self, x: torch.Tensor, return_hidden_state: bool = False
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    ) -> ForwardResult:
         token_embeddings = self.tok_emb(x)
 
         pos = torch.arange(0, x.shape[1], dtype=torch.int64, device=self.device)
@@ -256,8 +257,8 @@ class GPTModel(lightning.LightningModule):
         logits = self.lm_head(h)
 
         if return_hidden_state:
-            return logits, h
-        return logits
+            return ForwardResult(logits, h, None)
+        return ForwardResult(logits, None, None)
 
     def hidden_states(self, x: torch.Tensor) -> torch.Tensor:
         # x is (B, L, M = 1 + T + 2 + D)
@@ -637,7 +638,7 @@ class GPTModel(lightning.LightningModule):
         assert_shape(targets, (b, lp, a))
 
         # Calculate logits without thoughts
-        logits, h = self.forward(inputs, return_hidden_state=True)
+        logits, h, _ = self.forward(inputs, return_hidden_state=True)
         assert_shape(logits, (b, l, v))
         assert_shape(h, (b, l, e))
         h = self.shift_and_stack(h, offset_max, self.lookahead_tokens)
@@ -722,8 +723,10 @@ class GPTModel(lightning.LightningModule):
         x = batch["input_ids"][:, :-1]
         y = batch["input_ids"][:, 1:]
 
-        logits = self.forward(x)
-        loss = self.calculate_loss(logits, y)
+        with torch.no_grad():
+            logits = self.forward(x).logits
+            loss = self.calculate_loss(logits, y)
+
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 

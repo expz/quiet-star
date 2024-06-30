@@ -115,7 +115,7 @@ def run_hidden_states_test(model: lightning.LightningModule, config: Config) -> 
     b, l, m = x1.shape
 
     # x1 must be 2D to work with Qwen2
-    _, h1 = model.forward(x1.reshape(b * l, m), return_hidden_state=True)
+    _, h1, _ = model.forward(x1.reshape(b * l, m), return_hidden_state=True)
     h1 = h1.reshape(b, l, m, -1)
 
     # extract the hidden states we care about

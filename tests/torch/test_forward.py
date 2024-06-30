@@ -79,13 +79,13 @@ def run_test_of_forward_with_cache(
     y_correct = output.logits[:, :, :original_vocab_length]
 
     print("x:", x.shape)
-    y_actual1, key_value_cache = thinking_model.forward(
+    y_actual1, _, key_value_cache = thinking_model.forward(
         x[:, :-2], return_key_value_cache=True
     )  # type: ignore
-    y_actual2, kev_value_cache = thinking_model.forward(
+    y_actual2, _, kev_value_cache = thinking_model.forward(
         x[:, -2:-1], key_value_cache=key_value_cache, return_key_value_cache=True
     )  # type: ignore
-    y_actual3 = thinking_model.forward(x[:, -1:], key_value_cache=kev_value_cache)
+    y_actual3, _, _ = thinking_model.forward(x[:, -1:], key_value_cache=kev_value_cache)
 
     y_actual = torch.cat([y_actual1, y_actual2, y_actual3], dim=1)
     y_actual = y_actual[:, :, :original_vocab_length]
