@@ -3,7 +3,7 @@ import torch
 import torch.utils.data
 from lightning.pytorch.callbacks import RichProgressBar
 
-from quiet_star.config import Config
+from quiet_star.config import Config, GPTConfig
 from quiet_star.dataset import get_open_web_math_dataset
 from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.openelm import OpenELMThoughtModel
@@ -48,7 +48,7 @@ def _train(
     return model
 
 
-def train_gpt(config: Config) -> GPTModel:
+def train_gpt(config: GPTConfig) -> GPTModel:
     lightning.pytorch.seed_everything(config.seed, workers=True)
 
     model = GPTModel(config).to(config.model.device)

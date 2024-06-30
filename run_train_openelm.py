@@ -11,22 +11,20 @@ warnings.filterwarnings("ignore")
 
 
 @dataclasses.dataclass
-class OpenELMModelConfig(ModelConfig):
+class OpenELMDefaultModelConfig(ModelConfig):
     """
     Configuration for the OpenELM model architecture.
     """
 
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: str = "bfloat16"
-    embed_dim: int = 64 * 20
     max_length: int = 64
     model_name: str = "apple/OpenELM-270M-Instruct"
     tokenizer_name: str = "meta-llama/Llama-2-7b-hf"
-    num_layers: int = 16
 
 
 @dataclasses.dataclass
-class OpenELMConfig(Config):
+class OpenELMDefaultConfig(Config):
     """
     Configuration for the OpenELM model training process and dataset.
     """
@@ -39,17 +37,17 @@ class OpenELMConfig(Config):
     seed: int = 1
     thought_length: int = 8
 
-    model: OpenELMModelConfig = OpenELMModelConfig()
+    model: OpenELMDefaultModelConfig = OpenELMDefaultModelConfig()
 
 
-def parse_args() -> OpenELMConfig:
+def parse_args() -> OpenELMDefaultConfig:
     parser = ArgumentParser()
-    parser.add_arguments(OpenELMConfig, dest="config")
+    parser.add_arguments(OpenELMDefaultConfig, dest="config")
     args = parser.parse_args()
     return args.config
 
 
-def main(config: OpenELMConfig) -> None:
+def main(config: OpenELMDefaultConfig) -> None:
     train_openelm(config)
 
 

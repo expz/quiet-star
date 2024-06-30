@@ -1,6 +1,7 @@
 data/
 lightning_logs/
 .venv/
+.vscode/
 
 __pycache__
 *.pyc

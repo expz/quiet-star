@@ -8,7 +8,7 @@ import torch.utils.data
 from torch.nn import functional as F
 from transformers import AutoTokenizer
 
-from quiet_star.config import Config, ModelConfig
+from quiet_star.config import GPTConfig, GPTModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.torch.attention_torch import TorchCausalSelfAttention
 from quiet_star.torch.pretrained import ForwardResult
@@ -26,7 +26,7 @@ class GELU(torch.nn.Module):
 
 
 class SelfAttentionBlock(torch.nn.Module):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: GPTModelConfig):
         super().__init__()
         self.ln1 = torch.nn.LayerNorm(
             config.embed_dim, device=config.device, dtype=torch_dtype(config.dtype)
@@ -86,7 +86,7 @@ class SelfAttentionBlock(torch.nn.Module):
 
 
 class GPTModel(lightning.LightningModule):
-    def __init__(self, config: Config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
 
         model_config = config.model

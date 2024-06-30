@@ -4,24 +4,28 @@ from typing import Tuple
 
 @dataclasses.dataclass
 class ModelConfig:
-    # which implementation of attention to use
-    attn_type: str = "torch"
     # device to load the model on
     device: str = "cpu"
-    # dropout of the attention layers, not supported by all models
-    dropout_attn: float = 0.0
-    # dropout of the initial embedding layer, not supported by all models
-    dropout_embed: float = 0.0
     # data type of the model weights
     dtype: str = "float32"
-    # dimension of the model
-    embed_dim: int = 64 * 6
     # maximum context length
     max_length: int = 256
     # name of HuggingFace model to fine tune
-    model_name: str = "Qwen/Qwen1.5-0.5B"
+    model_name: str = "Qwen/Qwen2-0.5B-Instruct"
     # name of HuggingFace tokenizer to use
-    tokenizer_name: str = "Qwen/Qwen1.5-0.5B"
+    tokenizer_name: str = "Qwen/Qwen2-0.5B-Instruct"
+
+
+@dataclasses.dataclass
+class GPTModelConfig(ModelConfig):
+    # which implementation of attention to use
+    attn_type: str = "torch"
+    # dropout of the attention layers
+    dropout_attn: float = 0.0
+    # dropout of the initial embedding layer
+    dropout_embed: float = 0.0
+    # dimension of the model
+    embed_dim: int = 64 * 6
     # number of heads in the multi-head attention
     num_heads: int = 6
     # number of model layers
@@ -62,3 +66,8 @@ class Config:
     weight_decay: float = 0.001
 
     model: ModelConfig = ModelConfig()
+
+
+@dataclasses.dataclass
+class GPTConfig(Config):
+    model: GPTModelConfig = GPTModelConfig()

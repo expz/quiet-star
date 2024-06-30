@@ -1,13 +1,13 @@
 import mlx.core.random  # type: ignore
 import mlx.nn
 
-from quiet_star.config import Config
+from quiet_star.config import GPTConfig
 from quiet_star.dataset import get_open_web_math_dataset
 from quiet_star.mlx.framework import MLXDataLoader, MLXTrainer
 from quiet_star.mlx.gpt import GPTModel
 
 
-def train_gpt(config: Config) -> GPTModel:
+def train_gpt(config: GPTConfig) -> GPTModel:
     mlx.core.random.seed(config.seed)
 
     model = GPTModel(config)
@@ -15,6 +15,7 @@ def train_gpt(config: Config) -> GPTModel:
 
     dataset = get_open_web_math_dataset(
         model.tokenizer,
+        config.model.tokenizer_name,
         config.model.max_length,
         2,
         config.max_samples,

@@ -1,15 +1,13 @@
-import torch
-
-from quiet_star.config import Config, ModelConfig
-from quiet_star.train_mlx import train_gpt
+from quiet_star.config import GPTConfig, GPTModelConfig
+from quiet_star.mlx.train import train_gpt
 
 
 def main() -> None:
-    config = Config(
+    config = GPTConfig(
         batch_size=4,
         epochs=2,
         seed=1,
-        model=ModelConfig(
+        model=GPTModelConfig(
             attn_type="mlx",
             device="mps",
             dropout_attn=0.0,

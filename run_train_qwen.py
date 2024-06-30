@@ -11,23 +11,20 @@ warnings.filterwarnings("ignore")
 
 
 @dataclasses.dataclass
-class QwenModelConfig(ModelConfig):
+class QwenDefaultModelConfig(ModelConfig):
     """
     Configuration for the Qwen model architecture.
     """
 
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: str = "bfloat16"
-    embed_dim: int = 64 * 6
     max_length: int = 80
     model_name: str = "Qwen/Qwen2-0.5B-Instruct"
     tokenizer_name: str = "Qwen/Qwen2-0.5B-Instruct"
-    num_heads: int = 6
-    num_layers: int = 8
 
 
 @dataclasses.dataclass
-class QwenConfig(Config):
+class QwenDefaultConfig(Config):
     """
     Configuration for the Qwen model training process and dataset.
     """
@@ -40,17 +37,17 @@ class QwenConfig(Config):
     seed: int = 1
     thought_length: int = 8
 
-    model: QwenModelConfig = QwenModelConfig()
+    model: QwenDefaultModelConfig = QwenDefaultModelConfig()
 
 
-def parse_args() -> QwenConfig:
+def parse_args() -> QwenDefaultConfig:
     parser = ArgumentParser()
-    parser.add_arguments(QwenConfig, dest="config")
+    parser.add_arguments(QwenDefaultConfig, dest="config")
     args = parser.parse_args()
     return args.config
 
 
-def main(config: QwenConfig) -> None:
+def main(config: QwenDefaultConfig) -> None:
     train_qwen(config)
 
 

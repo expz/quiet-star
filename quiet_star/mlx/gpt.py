@@ -6,14 +6,14 @@ import mlx.optimizers
 import mlx.utils
 from transformers import AutoTokenizer
 
-from quiet_star.config import Config, ModelConfig
+from quiet_star.config import GPTConfig, GPTModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.mlx.framework import MLXModule
 from quiet_star.mlx.utils import assert_shape
 
 
 class SelfAttentionBlock(mlx.nn.Module):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: GPTModelConfig):
         super().__init__()
         self.ln1 = mlx.nn.LayerNorm(config.embed_dim)
         self.ln2 = mlx.nn.LayerNorm(config.embed_dim)
@@ -52,7 +52,7 @@ class SelfAttentionBlock(mlx.nn.Module):
 
 
 class _GPTModel(mlx.nn.Module):
-    def __init__(self, config: Config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
 
         model_config = config.model
@@ -437,7 +437,7 @@ class _GPTModel(mlx.nn.Module):
 
 
 class GPTModel(MLXModule):
-    def __init__(self, config: Config):
+    def __init__(self, config: GPTConfig):
         super().__init__(_GPTModel(config))
 
         self.learning_rate = config.learning_rate

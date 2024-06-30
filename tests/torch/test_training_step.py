@@ -1,7 +1,7 @@
 import lightning
 import torch
 
-from quiet_star.config import Config, ModelConfig
+from quiet_star.config import Config, GPTConfig, GPTModelConfig, ModelConfig
 from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.qwen import QwenThoughtModel
@@ -27,11 +27,11 @@ def run_training_step_test(model: lightning.LightningModule, config: Config) -> 
 
 
 def test_gpt_training_step() -> None:
-    config = Config(
+    config = GPTConfig(
         batch_size=5,
         thought_length=3,
         lookahead_tokens=2,
-        model=ModelConfig(
+        model=GPTModelConfig(
             attn_type="torch",
             dropout_attn=0.0,
             dropout_embed=0.0,
@@ -52,11 +52,9 @@ def test_qwen_training_step() -> None:
         thought_length=3,
         lookahead_tokens=4,
         model=ModelConfig(
-            attn_type="torch",
             device=device,
-            dropout_attn=0.0,
-            dropout_embed=0.0,
             model_name="Qwen/Qwen2-0.5B-Instruct",
+            tokenizer_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
         ),
     )
@@ -71,10 +69,7 @@ def test_openelm_training_step() -> None:
         thought_length=3,
         lookahead_tokens=4,
         model=ModelConfig(
-            attn_type="torch",
             device=device,
-            dropout_attn=0.0,
-            dropout_embed=0.0,
             model_name="apple/OpenELM-270M-Instruct",
             tokenizer_name="meta-llama/Llama-2-7b-hf",
             max_length=32,

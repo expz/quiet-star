@@ -3,7 +3,7 @@ import random
 import lightning
 import torch
 
-from quiet_star.config import Config, ModelConfig
+from quiet_star.config import Config, GPTConfig, GPTModelConfig, ModelConfig
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
 from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.openelm import OpenELMThoughtModel
@@ -134,11 +134,11 @@ def run_hidden_states_test(model: lightning.LightningModule, config: Config) -> 
 
 def test_gpt_hidden_states() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    config = Config(
+    config = GPTConfig(
         batch_size=2,
         lookahead_tokens=3,
         thought_length=3,
-        model=ModelConfig(
+        model=GPTModelConfig(
             attn_type="torch",
             device=device,
             dropout_attn=0.0,
@@ -161,10 +161,7 @@ def test_qwen_hidden_states() -> None:
         lookahead_tokens=3,
         thought_length=3,
         model=ModelConfig(
-            attn_type="torch",
             device=device,
-            dropout_attn=0.0,
-            dropout_embed=0.0,
             dtype="float32",
             model_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
@@ -181,10 +178,7 @@ def test_qwen_explicit_hidden_states() -> None:
         lookahead_tokens=3,
         thought_length=3,
         model=ModelConfig(
-            attn_type="torch",
             device=device,
-            dropout_attn=0.0,
-            dropout_embed=0.0,
             dtype="float32",
             model_name="Qwen/Qwen2-0.5B-Instruct",
             max_length=32,
@@ -201,11 +195,8 @@ def test_openelm_hidden_states() -> None:
         lookahead_tokens=3,
         thought_length=3,
         model=ModelConfig(
-            attn_type="torch",
             dtype="float32",
             device=device,
-            dropout_attn=0.0,
-            dropout_embed=0.0,
             model_name="apple/OpenELM-270M-Instruct",
             tokenizer_name="meta-llama/Llama-2-7b-hf",
             max_length=32,
