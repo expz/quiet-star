@@ -20,6 +20,7 @@
 - [x] convert mixing head to work with pretrained Huggingface model
 - [ ] speed up training by using flash attention
 - [ ] speed up training by adding hidden state generation to generate_thoughts() function
+- [ ] check if there's any way to reduce memory usage
 
 ## Housekeeping
 - [ ] Remove code duplication between `hidden_states()` and `generate_next_thought_token()`
@@ -33,6 +34,8 @@
 - [x] convert hidden state generation to work with openELM
 
 ## Evaluation
-- [ ] add generation function
-- [ ] add geenration script
-- [ ] add ARC-c evaluation script
+- [x] add generation function
+- [x] add generation script
+- [x] add GSM8K evaluation script
+- [ ] add options to evaluate using sampling instead of greedily
+- [ ] train on 512K samples and remove full disclosure if it improves performance

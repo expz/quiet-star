@@ -4,7 +4,7 @@ import torch.utils.data
 from lightning.pytorch.callbacks import RichProgressBar
 
 from quiet_star.config import Config, GPTConfig
-from quiet_star.dataset import get_open_web_math_dataset
+from quiet_star.dataset import _format_tokenizer_name, get_open_web_math_dataset
 from quiet_star.torch.gpt import GPTModel
 from quiet_star.torch.openelm import OpenELMThoughtModel
 from quiet_star.torch.qwen import QwenThoughtModel
@@ -12,10 +12,6 @@ from quiet_star.torch.qwen_explicit import QwenExplicitThoughtModel
 
 # Properly utilize tensor cores
 torch.set_float32_matmul_precision("medium")
-
-
-def _format_tokenizer_name(tokenizer_name: str) -> str:
-    return tokenizer_name.replace("/", "_").lower()
 
 
 def _train(
