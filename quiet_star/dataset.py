@@ -12,6 +12,10 @@ from transformers import AutoTokenizer
 DATASET_LOCAL_PATH = "data/open-web-math"
 
 
+def _format_tokenizer_name(tokenizer_name: str) -> str:
+    return tokenizer_name.replace("/", "_").lower()
+
+
 def random_split_on_whitespace(text: str, min_remaining_whitespace: int = 256) -> str:
     """
     Splits a string on a random whitespace character and returns the second part.
@@ -66,14 +70,18 @@ def get_open_web_math_dataset(
     tokenizer: AutoTokenizer,
     tokenizer_name: str,
     max_length: int,
-    file_count: int = 1,
     max_samples: int = 2048,
     test_pct: float = 0.125,
+    file_count: int | None = None,
     tensor_type: str = "torch",
     use_local_cache: bool = True,
 ) -> torch.utils.data.Dataset:
     cache_path = os.path.join(
-        DATASET_LOCAL_PATH, tokenizer_name, str(max_length), tensor_type
+        DATASET_LOCAL_PATH,
+        tokenizer_name,
+        str(max_length),
+        tensor_type,
+        str(max_samples),
     )
     if use_local_cache:
         try:
@@ -90,6 +98,9 @@ def get_open_web_math_dataset(
         str(pathlib.Path(path).relative_to(*pathlib.Path(path).parts[:3]))
         for path in paths
     ]
+
+    if file_count is None:
+        file_count = max_samples // 32768 + 1
 
     large_dataset = datasets.load_dataset(
         "open-web-math/open-web-math",

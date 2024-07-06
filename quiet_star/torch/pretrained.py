@@ -1,5 +1,5 @@
 import abc
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import lightning
 import lightning.pytorch
@@ -40,7 +40,8 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self.thought_length = config.thought_length
         self.lookahead_tokens = config.lookahead_tokens
 
-        self.max_length = config.model.max_length
+        self.train_max_length = config.model.train_max_length
+        self.eval_max_length = self.train_max_length
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             config.model.tokenizer_name,
@@ -194,7 +195,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         # only generate thoughts for tokens which have enough lookahead tokens
         n = self.thought_length + 2 + self.lookahead_tokens
-        lpp = min(self.max_length - n, l - (self.lookahead_tokens - 1))
+        lpp = min(self.train_max_length - n, l - (self.lookahead_tokens - 1))
 
         start_token = torch.full(
             (b, lpp, 1),
@@ -345,7 +346,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         t = self.thought_length
         a = self.lookahead_tokens
         l = inputs.shape[1]
-        lp = min(l - (a - 1), self.max_length - (t + 2 + a))
+        lp = min(l - (a - 1), self.train_max_length - (t + 2 + a))
         e = self.embed_dim
         v = self.vocab_size
 
@@ -354,7 +355,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         offset_max = min(
             inputs.shape[-1] - (self.lookahead_tokens - 1),
-            self.max_length - (self.thought_length + 2 + self.lookahead_tokens),
+            self.train_max_length - (self.thought_length + 2 + self.lookahead_tokens),
         )
 
         targets = self.shift_and_stack(targets, offset_max, self.lookahead_tokens)
@@ -448,7 +449,6 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         top_p: float | None = None,
         temp: float = 1.0,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
-        # generate a first thought token and save the key value cache
         logits, _, key_value_cache = self.forward(
             x,
             attention_mask=attention_mask,
@@ -468,34 +468,18 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             key_value_cache,
         )
 
-    def generate_thoughtful_token(
+    def thoughtful_forward(
         self,
         x: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
         key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        return_key_value_cache: bool = False,
+        return_hidden_state: bool = False,
         do_sample: bool = False,
         top_k: float | None = None,
         top_p: float | None = None,
         temp: float = 1.0,
-    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
-        """
-        Generate a thought and then a token, returning just the token.
-
-        This method takes an input sequence of shape (batch_size, sequence_length)
-        and generates a thought sequence using the model's `forward` method. It
-        then samples a token from the distribution of the last token in the thought
-        sequence.
-
-        Args:
-            x: The input sequence of tokens.
-            do_sample: Whether to sample from the distribution or take the argmax.
-            top_k: The number of top tokens to consider during sampling.
-            top_p: The probability mass to consider during sampling.
-            temp: The temperature to apply to the logits during sampling.
-
-        Returns:
-            The generated tokens of shape (batch_size,).
-        """
+    ) -> ForwardResult:
         b, l = x.shape
         if key_value_cache:
             l = key_value_cache[0][0].size(2)
@@ -549,25 +533,83 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         # add the end thought token and generate the token to keep
         final_tokens = torch.cat([next_token, end_thought_token], dim=1)
-        logits, _, key_value_cache = self.forward(
+        logits, h, key_value_cache = self.forward(
             final_tokens,
             attention_mask,
             key_value_cache=key_value_cache,
-            return_key_value_cache=True,
+            return_key_value_cache=return_key_value_cache,
+            return_hidden_state=return_hidden_state,
         )
+        if return_key_value_cache:
+            assert key_value_cache is not None
+
+            key_value_cache = [
+                (
+                    torch.cat([kvs[0][:, :, :l], kvs[0][:, :, -1:]], dim=2),
+                    torch.cat([kvs[1][:, :, :l], kvs[1][:, :, -1:]], dim=2),
+                )
+                for kvs in key_value_cache
+            ]
+        return ForwardResult(logits, h, key_value_cache)
+
+    def generate_thoughtful_token(
+        self,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor,
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        do_sample: bool = False,
+        top_k: float | None = None,
+        top_p: float | None = None,
+        temp: float = 1.0,
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
+        """
+        Generate a thought and then a token, returning just the token.
+
+        This method takes an input sequence of shape (batch_size, sequence_length)
+        and generates a thought sequence using the model's `forward` method. It
+        then samples a token from the distribution of the last token in the thought
+        sequence.
+
+        Args:
+            x: The input sequence of tokens.
+            do_sample: Whether to sample from the distribution or take the argmax.
+            top_k: The number of top tokens to consider during sampling.
+            top_p: The probability mass to consider during sampling.
+            temp: The temperature to apply to the logits during sampling.
+
+        Returns:
+            The generated tokens of shape (batch_size,).
+        """
+        logits, h, key_value_cache = self.forward(
+            x,
+            attention_mask,
+            key_value_cache,
+            return_key_value_cache=True,
+            return_hidden_state=True,
+        )
+        logits_thought, h_thought, _ = self.thoughtful_forward(
+            x,
+            attention_mask,
+            key_value_cache,
+            return_key_value_cache=False,
+            return_hidden_state=True,
+            do_sample=do_sample,
+            top_k=top_k,
+            top_p=top_p,
+            temp=temp,
+        )
+
+        # appease mypy
+        assert h is not None
+        assert h_thought is not None
         assert key_value_cache is not None
 
-        key_value_cache = [
-            (
-                torch.cat([kvs[0][:, :, :l], kvs[0][:, :, -1:]], dim=2),
-                torch.cat([kvs[1][:, :, :l], kvs[1][:, :, -1:]], dim=2),
-            )
-            for kvs in key_value_cache
-        ]
-        print("key_value_cache:", key_value_cache[0][0].shape)
+        w = self.mixing_head(h[:, -1, :], h_thought[:, -1, :])
+        logits_final = w * logits[:, -1, :] + (1.0 - w) * logits_thought[:, -1, :]
+
         return (
             self.sample_next_token(
-                logits[:, -1, :],
+                logits_final,
                 do_sample,
                 top_k,
                 top_p,
@@ -602,6 +644,61 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         return final_token_match
 
+    def _generate(
+        self,
+        token_generator: Callable,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor,
+        max_new_tokens: int,
+        stop: list[str] = [],
+        do_sample: bool = False,
+        top_k: float | None = None,
+        top_p: float | None = None,
+        temp: float = 1.0,
+    ) -> torch.Tensor:
+        if x.size(1) == 0:
+            return torch.tensor(
+                [[self.pad_token_id] * x.size(0)], dtype=x.dtype, device=x.device
+            )
+
+        stop_token_ids = [
+            self.tokenizer.encode(s, return_tensors="pt", add_special_tokens=False)[
+                0
+            ].to(x.device)
+            for s in stop
+        ]
+
+        unfinished_sequences = torch.ones(
+            (x.size(0),), device=self.device, dtype=x.dtype
+        )
+
+        x_completed = x
+        new_token = x
+        key_value_cache = None
+
+        with torch.no_grad():
+            for _ in range(max_new_tokens):
+                new_token, key_value_cache = token_generator(
+                    new_token,
+                    attention_mask,
+                    key_value_cache,
+                    do_sample,
+                    top_k,
+                    top_p,
+                    temp,
+                )
+                new_token = new_token * unfinished_sequences + self.pad_token_id * (
+                    1 - unfinished_sequences
+                )
+                x_completed = torch.cat([x_completed, new_token], dim=1)
+                unfinished_sequences = unfinished_sequences & ~self.detect_final_tokens(
+                    x_completed, stop_token_ids
+                )
+                if unfinished_sequences.max() == 0:
+                    break
+        print(self.tokenizer.batch_decode(x_completed))
+        return x_completed
+
     def generate(
         self,
         x: torch.Tensor,
@@ -634,43 +731,61 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         Returns:
             The generated tokens of shape (batch_size, sequence_length + max_new_tokens).
         """
-        stop_token_ids = [
-            self.tokenizer.encode(s, return_tensors="pt", add_special_tokens=False)[
-                0
-            ].to(x.device)
-            for s in stop
-        ]
-
-        unfinished_sequences = torch.ones(
-            (x.size(0),), device=self.device, dtype=x.dtype
+        return self._generate(
+            self.generate_token,
+            x,
+            attention_mask,
+            max_new_tokens,
+            stop,
+            do_sample,
+            top_k,
+            top_p,
+            temp,
         )
 
-        x_completed = x
-        new_token = x
-        key_value_cache = None
+    def thoughtful_generate(
+        self,
+        x: torch.Tensor,
+        attention_mask: torch.Tensor,
+        max_new_tokens: int,
+        stop: list[str] = [],
+        do_sample: bool = False,
+        top_k: float | None = None,
+        top_p: float | None = None,
+        temp: float = 1.0,
+    ) -> torch.Tensor:
+        """
+        Generate new tokens using the model.
 
-        with torch.no_grad():
-            for _ in range(max_new_tokens):
-                new_token, key_value_cache = self.generate_token(
-                    new_token,
-                    attention_mask,
-                    key_value_cache,
-                    do_sample,
-                    top_k,
-                    top_p,
-                    temp,
-                )
-                new_token = new_token * unfinished_sequences + self.pad_token_id * (
-                    1 - unfinished_sequences
-                )
-                x_completed = torch.cat([x_completed, new_token], dim=1)
-                unfinished_sequences = unfinished_sequences & ~self.detect_final_tokens(
-                    x_completed, stop_token_ids
-                )
-                if unfinished_sequences.max() == 0:
-                    break
-        print(self.tokenizer.batch_decode(x_completed))
-        return x_completed
+        This method takes an input sequence of shape (batch_size, sequence_length) and generates
+        new tokens using the model's `generate_thoughtful_token` method. It continues generating
+        tokens until either `max_new_tokens` tokens have been generated or the model
+        outputs the end-of-sequence token.
+
+        Args:
+            x: The input sequence of tokens.
+            attention_mask: The attention mask for the input sequence.
+            max_new_tokens: The maximum number of new tokens to generate.
+            stop: A list of strings to stop generation at.
+            do_sample: Whether to sample from the distribution or take the argmax.
+            top_k: The number of top tokens to consider during sampling.
+            top_p: The probability mass to consider during sampling.
+            temp: The temperature to apply to the logits during sampling.
+
+        Returns:
+            The generated tokens of shape (batch_size, sequence_length + max_new_tokens).
+        """
+        return self._generate(
+            self.generate_thoughtful_token,
+            x,
+            attention_mask,
+            max_new_tokens,
+            stop,
+            do_sample,
+            top_k,
+            top_p,
+            temp,
+        )
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> float:
         x = batch["input_ids"][:, :-1]

@@ -18,24 +18,26 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             attn_implementation="flash_attention_2",
         )
 
-        if config.model.max_length > pretrained_config.max_context_length:
+        if config.model.train_max_length > pretrained_config.max_context_length:
             warnings.warn(
-                f"max_length was set to {config.model.max_length} which is "
+                f"max_length was set to {config.model.train_max_length} which is "
                 f"greater than the context window supported by the Qwen model "
                 f"({pretrained_config.max_context_length})"
             )
-            config.model.max_length = pretrained_config.max_context_length
+            config.model.train_max_length = pretrained_config.max_context_length
 
         super().__init__(config)
 
         self.save_hyperparameters()  # saves the argument(s) of __init__
 
-        modules = dict(self.model.named_modules())
+        self.eval_max_length = pretrained_config.max_context_length
 
         self.num_kv_heads: list[int] = pretrained_config.num_kv_heads
         self.num_query_heads: list[int] = pretrained_config.num_query_heads
         self.num_gqa_groups: int = pretrained_config.num_gqa_groups
         self.head_dim: int = pretrained_config.head_dim
+
+        modules = dict(self.model.named_modules())
 
         self.layers = torch.nn.ModuleList(modules["transformer.layers"])
 
@@ -54,7 +56,7 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         self._set_cos_sin_cache(
-            seq_len=self.max_length, device=self.inv_freq.device, dtype=self.dtype
+            seq_len=self.train_max_length, device=self.inv_freq.device, dtype=self.dtype
         )
 
     def _set_cos_sin_cache(

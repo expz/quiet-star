@@ -2,7 +2,7 @@ import mlx.core.random  # type: ignore
 import mlx.nn
 
 from quiet_star.config import GPTConfig
-from quiet_star.dataset import get_open_web_math_dataset
+from quiet_star.dataset import _format_tokenizer_name, get_open_web_math_dataset
 from quiet_star.mlx.framework import MLXDataLoader, MLXTrainer
 from quiet_star.mlx.gpt import GPTModel
 
@@ -15,13 +15,11 @@ def train_gpt(config: GPTConfig) -> GPTModel:
 
     dataset = get_open_web_math_dataset(
         model.tokenizer,
-        config.model.tokenizer_name,
-        config.model.max_length,
-        2,
+        _format_tokenizer_name(config.model.tokenizer_name),
+        config.model.train_max_length,
         config.max_samples,
         config.test_pct,
         tensor_type="mlx",
-        # use_local_cache=False,
     )
 
     train_dataloader = MLXDataLoader(dataset["train"], batch_size=config.batch_size)

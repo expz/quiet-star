@@ -38,7 +38,7 @@ class SelfAttentionBlock(torch.nn.Module):
             self.self_attn = TorchCausalSelfAttention(
                 config.embed_dim,
                 config.num_heads,
-                config.max_length,
+                config.train_max_length,
                 config.dropout_attn,
                 device=config.device,
                 dtype=torch_dtype(config.dtype),
@@ -47,7 +47,7 @@ class SelfAttentionBlock(torch.nn.Module):
             self.self_attn = TritonCausalSelfAttention(
                 config.embed_dim,
                 config.num_heads,
-                config.max_length,
+                config.train_max_length,
                 config.dropout_attn,
                 device=config.device,
                 dtype=torch_dtype(config.dtype),
@@ -94,7 +94,7 @@ class GPTModel(lightning.LightningModule):
         self._dtype = torch_dtype(model_config.dtype)
         self.embed_dim = model_config.embed_dim
         self.num_heads = model_config.num_heads
-        self.max_length = model_config.max_length
+        self.max_length = model_config.train_max_length
         self.num_thoughts = config.num_thoughts
         self.thought_length = config.thought_length
         self.lookahead_tokens = config.lookahead_tokens
@@ -130,7 +130,7 @@ class GPTModel(lightning.LightningModule):
             dtype=torch_dtype(model_config.dtype),
         )
         self.pos_emb = torch.nn.Embedding(
-            model_config.max_length,
+            model_config.train_max_length,
             model_config.embed_dim,
             device=model_config.device,
             dtype=torch_dtype(model_config.dtype),

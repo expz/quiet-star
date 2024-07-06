@@ -24,7 +24,7 @@ def prepare_test_inputs(
         text,
         padding="do_not_pad",
         truncation=True,
-        max_length=config.model.max_length - config.thought_length - 2,
+        max_length=config.model.train_max_length - config.thought_length - 2,
         return_tensors="np",
         return_attention_mask=False,
     )["input_ids"][0].tolist()
@@ -131,7 +131,7 @@ def test_thought_generation() -> None:
             dropout_attn=0.0,
             dropout_embed=0.0,
             embed_dim=3 * 8,
-            max_length=32,
+            train_max_length=32,
             num_heads=3,
             num_layers=3,
         ),

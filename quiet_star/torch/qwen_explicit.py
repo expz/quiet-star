@@ -24,25 +24,27 @@ class QwenExplicitThoughtModel(PretrainedThoughtModel):
     def __init__(self, config: Config):
         pretrained_config = AutoConfig.from_pretrained(config.model.model_name)
 
-        if config.model.max_length > pretrained_config.max_position_embeddings:
+        if config.model.train_max_length > pretrained_config.max_position_embeddings:
             warnings.warn(
-                f"max_length was set to {config.model.max_length} which is "
+                f"max_length was set to {config.model.train_max_length} which is "
                 f"greater than the context window supported by the Qwen model "
                 f"({pretrained_config.max_position_embeddings})"
             )
-            config.model.max_length = pretrained_config.max_position_embeddings
+            config.model.train_max_length = pretrained_config.max_position_embeddings
 
         super().__init__(config)
 
         self.save_hyperparameters()  # saves the argument(s) of __init__
 
-        modules = dict(self.model.named_modules())
+        self.eval_max_length = pretrained_config.sliding_window
 
         self.num_kv_heads = pretrained_config.num_key_value_heads
         self.num_query_heads = pretrained_config.num_attention_heads
         self.num_gqa_groups = self.num_query_heads // self.num_kv_heads
 
         self.head_dim = self.embed_dim // self.num_query_heads
+
+        modules = dict(self.model.named_modules())
 
         self.layers = torch.nn.ModuleList(modules["model.layers"])
 

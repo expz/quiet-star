@@ -1,6 +1,8 @@
 import dataclasses
 from typing import Tuple
 
+import torch
+
 
 @dataclasses.dataclass
 class ModelConfig:
@@ -8,8 +10,8 @@ class ModelConfig:
     device: str = "cpu"
     # data type of the model weights
     dtype: str = "float32"
-    # maximum context length
-    max_length: int = 256
+    # maximum context length while training
+    train_max_length: int = 256
     # name of HuggingFace model to fine tune
     model_name: str = "Qwen/Qwen2-0.5B-Instruct"
     # name of HuggingFace tokenizer to use
@@ -71,3 +73,63 @@ class Config:
 @dataclasses.dataclass
 class GPTConfig(Config):
     model: GPTModelConfig = GPTModelConfig()
+
+
+@dataclasses.dataclass
+class QwenDefaultModelConfig(ModelConfig):
+    """
+    Configuration for the Qwen model architecture.
+    """
+
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype: str = "bfloat16"
+    train_max_length: int = 80
+    model_name: str = "Qwen/Qwen2-0.5B-Instruct"
+    tokenizer_name: str = "Qwen/Qwen2-0.5B-Instruct"
+
+
+@dataclasses.dataclass
+class QwenDefaultConfig(Config):
+    """
+    Configuration for the Qwen model training process and dataset.
+    """
+
+    batch_size: int = 1
+    epochs: int = 2
+    lookahead_tokens: int = 4
+    max_samples: int = 2048
+    num_thoughts: int = 2
+    seed: int = 1
+    thought_length: int = 8
+
+    model: QwenDefaultModelConfig = QwenDefaultModelConfig()
+
+
+@dataclasses.dataclass
+class OpenELMDefaultModelConfig(ModelConfig):
+    """
+    Configuration for the OpenELM model architecture.
+    """
+
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype: str = "bfloat16"
+    train_max_length: int = 64
+    model_name: str = "apple/OpenELM-270M-Instruct"
+    tokenizer_name: str = "meta-llama/Llama-2-7b-hf"
+
+
+@dataclasses.dataclass
+class OpenELMDefaultConfig(Config):
+    """
+    Configuration for the OpenELM model training process and dataset.
+    """
+
+    batch_size: int = 1
+    epochs: int = 2
+    lookahead_tokens: int = 4
+    max_samples: int = 2048
+    num_thoughts: int = 2
+    seed: int = 1
+    thought_length: int = 8
+
+    model: OpenELMDefaultModelConfig = OpenELMDefaultModelConfig()

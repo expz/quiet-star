@@ -29,7 +29,7 @@ def standard_setup(
         text,
         padding="do_not_pad",
         truncation=True,
-        max_length=config.model.max_length - config.thought_length - 2,
+        max_length=config.model.train_max_length - config.thought_length - 2,
         return_tensors="np",
         return_attention_mask=False,
     )["input_ids"][0].tolist()
@@ -110,7 +110,7 @@ def test_qwen_explicit_forward() -> None:
             device=device,
             model_name="Qwen/Qwen2-0.5B-Instruct",
             tokenizer_name="Qwen/Qwen2-0.5B-Instruct",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     thinking_model = QwenExplicitThoughtModel(config).to(config.model.device)
@@ -129,7 +129,7 @@ def test_openelm_forward() -> None:
             device=device,
             model_name="apple/OpenELM-270M-Instruct",
             tokenizer_name="meta-llama/Llama-2-7b-hf",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     thinking_model = OpenELMThoughtModel(config).to(config.model.device)
@@ -151,7 +151,7 @@ def test_qwen_forward_with_key_value_cache() -> None:
             device=device,
             model_name="Qwen/Qwen2-0.5B-Instruct",
             tokenizer_name="Qwen/Qwen2-0.5B-Instruct",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     thinking_model = QwenThoughtModel(config).to(config.model.device)
@@ -173,7 +173,7 @@ def test_openelm_forward_with_key_value_cache() -> None:
             device=device,
             model_name="apple/OpenELM-270M-Instruct",
             tokenizer_name="meta-llama/Llama-2-7b-hf",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     thinking_model = OpenELMThoughtModel(config).to(config.model.device)

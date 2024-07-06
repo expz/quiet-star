@@ -36,6 +36,7 @@ triton = "^2.3.0"
 # nvidia-nccl-cu12 = "2.20.5"
 # nvidia-nvjitlink-cu12 = "12.4.127"
 # nvidia-nvtx-cu12 = "12.1.105"
+lm-eval = "^0.4.2"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.3.0"
@@ -56,6 +57,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.mypy]
 disallow_untyped_defs = true
 disable_error_code = ["import-untyped"]
+files = ["tests/torch/*.py", "quiet_star/*.py", "quiet_star/torch/*.py"]
 follow_imports = "skip"
 exclude = [".venv"]
 

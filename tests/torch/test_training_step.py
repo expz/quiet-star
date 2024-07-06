@@ -13,7 +13,7 @@ def run_training_step_test(model: lightning.LightningModule, config: Config) -> 
         text,
         padding="do_not_pad",
         truncation=True,
-        max_length=config.model.max_length,
+        max_length=config.model.train_max_length,
         return_tensors="np",
         return_attention_mask=False,
     )["input_ids"][0].tolist()
@@ -36,7 +36,7 @@ def test_gpt_training_step() -> None:
             dropout_attn=0.0,
             dropout_embed=0.0,
             embed_dim=3 * 8,
-            max_length=32,
+            train_max_length=32,
             num_heads=3,
             num_layers=3,
         ),
@@ -55,7 +55,7 @@ def test_qwen_training_step() -> None:
             device=device,
             model_name="Qwen/Qwen2-0.5B-Instruct",
             tokenizer_name="Qwen/Qwen2-0.5B-Instruct",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     model = QwenThoughtModel(config).to(config.model.device)
@@ -72,7 +72,7 @@ def test_openelm_training_step() -> None:
             device=device,
             model_name="apple/OpenELM-270M-Instruct",
             tokenizer_name="meta-llama/Llama-2-7b-hf",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     model = OpenELMThoughtModel(config).to(config.model.device)

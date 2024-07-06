@@ -18,7 +18,7 @@ def prepare_test_inputs(
         text,
         padding="do_not_pad",
         truncation=True,
-        max_length=config.model.max_length - config.thought_length - 2,
+        max_length=config.model.train_max_length - config.thought_length - 2,
         return_tensors="np",
         return_attention_mask=False,
     )["input_ids"][0].tolist()
@@ -148,7 +148,7 @@ def test_gpt_thought_generation() -> None:
             dropout_attn=0.0,
             dropout_embed=0.0,
             embed_dim=3 * 8,
-            max_length=32,
+            train_max_length=32,
             num_heads=3,
             num_layers=3,
         ),
@@ -166,7 +166,7 @@ def test_qwen_thought_generation() -> None:
             device=device,
             dtype="float32",
             model_name="Qwen/Qwen2-0.5B-Instruct",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     model = QwenThoughtModel(config).to(config.model.device)
@@ -182,7 +182,7 @@ def test_qwen_explicit_thought_generation() -> None:
             device=device,
             dtype="float32",
             model_name="Qwen/Qwen2-0.5B-Instruct",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     model = QwenExplicitThoughtModel(config).to(config.model.device)
@@ -199,7 +199,7 @@ def test_openelm_thought_generation() -> None:
             dtype="float32",
             model_name="apple/OpenELM-270M-Instruct",
             tokenizer_name="meta-llama/Llama-2-7b-hf",
-            max_length=32,
+            train_max_length=32,
         ),
     )
     model = OpenELMThoughtModel(config).to(config.model.device)

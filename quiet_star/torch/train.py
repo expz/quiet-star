@@ -24,8 +24,7 @@ def _train(
     dataset = get_open_web_math_dataset(
         model.tokenizer,
         _format_tokenizer_name(config.model.tokenizer_name),
-        config.model.max_length,
-        2,
+        config.model.train_max_length,
         config.max_samples,
         config.test_pct,
     )
