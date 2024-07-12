@@ -223,58 +223,97 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             return ForwardResult(logits, None, new_key_value_cache)
         return ForwardResult(logits, None, None)
 
-    def hidden_states(self, x: torch.Tensor) -> torch.Tensor:
-        # x is (B, L, M = 1 + T + 2 + D)
-        b, l, m = x.shape
+    def lookahead_hidden_states(
+        self, x: torch.Tensor, key_value_cache: list[tuple[torch.Tensor, torch.Tensor]]
+    ) -> torch.Tensor:
+        """
+        Args:
+            x: (B, L, A)
+                We expect that A == self.lookahead_tokens
+            key_value_cache: (list[tuple[torch.Tensor, torch.Tensor]])
+                A list of (key, value) pairs for each layer in the model.
+                It should cache keys for L + 1 + self.thought_length tokens
 
+        """
+        b, l, a = x.shape
+        assert a == self.lookahead_tokens
+
+        m = key_value_cache[0][0].size(2)
+        assert m == l + 1 + self.thought_length
+
+        # this part of the causal mask will prevent lookahead tokens from
+        # attending to later tokens in the original (thought-free) sequence
+        # this part of the mask actually governs attention to the tokens
+        # represented by the key-value cache
         causal_mask1 = torch.triu(
             torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
             diagonal=1,
         )
         causal_mask1 = expand_dims(causal_mask1, (0, 1, 3))
-        causal_mask2 = torch.triu(
-            torch.full(
-                (m, m - 1), float("-inf"), dtype=self._dtype, device=self.device
-            ),
-            diagonal=0,
-        )
-        causal_mask2 = expand_dims(causal_mask2, (0, 1, 2))
 
-        causal_mask1 = causal_mask1.repeat(b, 1, 1, causal_mask2.size(3), 1)
-        causal_mask2 = causal_mask2.repeat(b, 1, causal_mask1.size(2), 1, 1)
+        # this part of the causal mask allows all lookahead tokens to attend to
+        # all thought tokens (and start thought token)
+        causal_mask2 = torch.zeros(
+            (b, 1, l, a, 1 + self.thought_length), dtype=self._dtype, device=self.device
+        )
+        # this part of the causal mask will prevent lookahead tokens from
+        # attending to later tokens in the same thought
+        causal_mask3 = torch.triu(
+            torch.full((a, a), float("-inf"), dtype=self._dtype, device=self.device),
+            diagonal=1,
+        )
+        causal_mask3 = expand_dims(causal_mask3, (0, 1, 2))
+
+        # combine the three masks and absorb the sequence length dimension
+        # into the batch dimension, for example, at the first token in the sequence
+        # the mask for a three token sequence with thought length two and
+        # four lookahead tokens will be
+        #   [0., -inf, -inf, 0, 0, 0, 0, -inf, -inf, -inf]
+        #   [0., -inf, -inf, 0, 0, 0, 0, 0, -inf, -inf]
+        #   [0., -inf, -inf, 0, 0, 0, 0, 0, 0, -inf]
+        #   [0., -inf, -inf, 0, 0, 0, 0, 0, 0, 0]
+        causal_mask1 = causal_mask1.repeat(b, 1, 1, a, 1)
+        causal_mask3 = causal_mask3.repeat(b, 1, l, 1, 1)
         causal_mask = (
-            torch.concatenate([causal_mask1, causal_mask2], dim=-1)
-            .swapaxes(1, 2)
-            .reshape(
-                b * l,
-                1,
-                causal_mask1.size(3),
-                causal_mask1.size(4) + causal_mask2.size(4),
-            )
+            torch.concatenate([causal_mask1, causal_mask2, causal_mask3], dim=-1)
+            .transpose(1, 2)
+            .reshape(b * l, 1, a, m + a)
             .contiguous()
         )
+        print("causal_mask:", causal_mask.shape, causal_mask[0])
 
-        row = torch.arange(0, m, dtype=torch.int64, device=self.device).reshape(1, m)
+        # these are only the position ids for the tokens in x2
+        # they do not include the positions for the tokens represented
+        # by the key-value cache
+        row = torch.arange(
+            self.thought_length + 2,
+            self.thought_length + 2 + a,
+            dtype=torch.int64,
+            device=self.device,
+        ).reshape(1, a)
         offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
         position_ids = (
             (row + offset)
-            .reshape(1, l, m)
+            .reshape((1, l, a))
             .tile((b, 1, 1))
-            .reshape(b * l, 1, m)
+            .reshape(b * l, 1, a)
             .contiguous()
         )
 
-        x = x.reshape(b * l, m)
+        x = x.reshape(b * l, a)
         x = self.tok_emb(x)
 
+        cos, sin = self.rotary_emb(x, seq_len=m + a)
         for i, layer in enumerate(self.layers):
             residual = x
             x = layer.attn_norm(x)
 
+            q_position_ids = position_ids.tile(1, self.num_query_heads[i], 1)
+            k_position_ids = position_ids.tile(1, self.num_kv_heads[i], 1)
             total_heads = 2 * self.num_kv_heads[i] + self.num_query_heads[i]
             qkv = (
                 layer.attn.qkv_proj(x)
-                .reshape(b * l, m, total_heads, self.head_dim)
+                .reshape(b * l, a, total_heads, self.head_dim)
                 .permute([0, 2, 1, 3])
             )
             q, k, v = qkv.split(
@@ -285,37 +324,10 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             q = layer.attn.q_norm(q)
             k = layer.attn.k_norm(k)
 
-            k1 = k[:, :, :1].repeat(1, 1, l, 1)
-            k2 = k[:, :, 1:]
-            v1 = (
-                v[:, :, :1]
-                .reshape(b, l, self.num_kv_heads[i], 1, self.head_dim)
-                .swapaxes(1, 3)
-                .repeat(1, l, 1, 1, 1)
-                .reshape(b * l, self.num_kv_heads[i], l, self.head_dim)
-            )
-            v2 = v[:, :, 1:]
-
-            # apply rotary embedding
-            cos, sin = self.rotary_emb(v1, seq_len=l + m)
-            q_position_ids = position_ids.tile(1, self.num_query_heads[i], 1).reshape(
-                b * l, self.num_query_heads[i], m
-            )
-            k_position_ids = position_ids.tile(1, self.num_kv_heads[i], 1).reshape(
-                b * l, self.num_kv_heads[i], m
-            )
             q = self.apply_rotary_pos_emb(q, cos, sin, q_position_ids)
-            k1 = self.apply_rotary_pos_emb(k1, cos, sin, k_position_ids[:, :, :1])
-            k2 = self.apply_rotary_pos_emb(k2, cos, sin, k_position_ids[:, :, 1:])
-
-            k1 = (
-                k1.reshape(b, l, self.num_kv_heads[i], l, self.head_dim)
-                .transpose(1, 3)
-                .reshape(b * l, self.num_kv_heads[i], l, self.head_dim)
-            )
-
-            k = torch.concatenate([k1, k2], dim=-2)
-            v = torch.concatenate([v1, v2], dim=-2)
+            k = self.apply_rotary_pos_emb(k, cos, sin, k_position_ids)
+            k = torch.concatenate([key_value_cache[i][0], k], dim=-2)
+            v = torch.concatenate([key_value_cache[i][1], v], dim=-2)
 
             k = k.repeat_interleave(self.num_gqa_groups, dim=1)
             v = v.repeat_interleave(self.num_gqa_groups, dim=1)
@@ -323,28 +335,29 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             layer_causal_mask = causal_mask.repeat(
                 1, self.num_kv_heads[i], 1, 1
             ).repeat_interleave(self.num_gqa_groups, dim=1)
-            a = torch.nn.functional.softmax(
+            if i == 0:
+                print("layer_causal_mask:", layer_causal_mask.shape)
+                print("q:", q.shape)
+                print("k:", k.shape)
+            attn = torch.nn.functional.softmax(
                 (torch.matmul(q, k.transpose(-2, -1)) + layer_causal_mask)
                 / math.sqrt(q.size(-1)),
                 dim=-1,
             )
 
-            attn_out = torch.matmul(a, v)
+            attn_out = torch.matmul(attn, v)
             attn_out = layer.attn.out_proj(
-                attn_out.reshape(b * l, self.num_query_heads[i], m, self.head_dim)
+                attn_out.reshape(b * l, self.num_query_heads[i], a, self.head_dim)
                 .permute([0, 2, 1, 3])
-                .reshape(b * l, m, self.num_query_heads[i] * self.head_dim)
+                .reshape(b * l, a, self.num_query_heads[i] * self.head_dim)
             )
             x = residual + attn_out
             x = x + layer.ffn(layer.ffn_norm(x))
 
-        # (B * L, M, E)
+        # (B * L, A, E)
         h = self.ln(x)
 
-        h = h.reshape(b, l, m, -1)
-
-        # only keep the hidden states which we care about
-        h = h[:, :, -(self.lookahead_tokens + 1) : -1]
+        h = h.reshape(b, l, a, self.embed_dim)
 
         return h
 
@@ -352,12 +365,12 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
         self,
         x: torch.Tensor,
         t: int,
-        activation_cache: list[dict[str, torch.Tensor]] | None = None,
-    ) -> tuple[torch.Tensor, list[dict[str, torch.Tensor]]]:
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         b, l, d = x.shape
 
-        if activation_cache is None:
-            activation_cache = [{} for _ in range(len(self.layers))]
+        if key_value_cache is None:
+            key_value_cache = []
 
         causal_mask1 = torch.triu(
             torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
@@ -396,16 +409,12 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
         x = x.reshape(b * l, d)
         x = self.tok_emb(x)
 
+        cos, sin = self.rotary_emb(x, seq_len=l + t + 1)
         for i, layer in enumerate(self.layers):
             residual = x
             x = layer.attn_norm(x)
-            cos, sin = self.rotary_emb(x, seq_len=l + t + 1)
-            q_position_ids = position_ids.tile(1, self.num_query_heads[i], 1).reshape(
-                b * l, self.num_query_heads[i], d
-            )
-            k_position_ids = position_ids.tile(1, self.num_kv_heads[i], 1).reshape(
-                b * l, self.num_kv_heads[i], d
-            )
+            q_position_ids = position_ids.tile(1, self.num_query_heads[i], 1)
+            k_position_ids = position_ids.tile(1, self.num_kv_heads[i], 1)
             total_heads = 2 * self.num_kv_heads[i] + self.num_query_heads[i]
             qkv = (
                 layer.attn.qkv_proj(x)
@@ -420,11 +429,13 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
             q = layer.attn.q_norm(q)
             k = layer.attn.k_norm(k)
 
-            if activation_cache[i]:
+            if len(key_value_cache) > i:
                 q = self.apply_rotary_pos_emb(q, cos, sin, q_position_ids)
                 k = self.apply_rotary_pos_emb(k, cos, sin, k_position_ids)
-                k = torch.concatenate([activation_cache[i]["k"], k], dim=-2)
-                v = torch.concatenate([activation_cache[i]["v"], v], dim=-2)
+                k = torch.concatenate([key_value_cache[i][0], k], dim=-2)
+                v = torch.concatenate([key_value_cache[i][1], v], dim=-2)
+
+                key_value_cache[i] = (k, v)
             else:
                 k1 = k[:, :, :1].repeat(1, 1, l, 1)
                 k2 = k[:, :, 1:]
@@ -451,8 +462,7 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
                 k = torch.concatenate([k1, k2], dim=-2)
                 v = torch.concatenate([v1, v2], dim=-2)
 
-            activation_cache[i]["k"] = k
-            activation_cache[i]["v"] = v
+                key_value_cache.append((k, v))
 
             k = k.repeat_interleave(self.num_gqa_groups, dim=1)
             v = v.repeat_interleave(self.num_gqa_groups, dim=1)
@@ -479,9 +489,9 @@ class OpenELMThoughtModel(PretrainedThoughtModel):
         h = self.ln(x).reshape(b, l, d, -1)
         logits = self.lm_head(h)
 
-        assert activation_cache is not None
+        assert key_value_cache is not None
 
-        return logits, activation_cache
+        return logits, key_value_cache
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         decay = []

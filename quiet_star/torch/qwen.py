@@ -118,67 +118,25 @@ class QwenThoughtModel(PretrainedThoughtModel):
         x_embed = (x * cos) + (cls.rotate_half(x) * sin)
         return x_embed
 
-    def hidden_states(self, x: torch.Tensor) -> torch.Tensor:
+    def lookahead_hidden_states(
+        self, x: torch.Tensor, key_value_cache: list[tuple[torch.Tensor, torch.Tensor]]
+    ) -> torch.Tensor:
         """
         Args:
-            x: (B, L, M)
-                A tensor of a batch of B sequences of input IDs of length L
-                with thoughts at each location in the sequence. The thoughts
-                include the token from the sequence, the start thought token,
-                the thought, the end thought token, and the lookahead tokens.
+            x: (B, L, A)
+                We expect that A == self.lookahead_tokens
+            key_value_cache: (list[tuple[torch.Tensor, torch.Tensor]])
+                A list of (key, value) pairs for each layer in the model.
+                It should cache keys for L + 1 + self.thought_length tokens
 
-                For example, if B = 1 and there are two lookahead tokens:
-
-                token1 <|startofthought|> ... <|endofthought|> token2 token3
-                token2 <|startofthought|> ... <|endofthought|> token3 token4
-                token3 <|startofthought|> ... <|endofthought|> token4 token5
-                ...
-
-                Sequences with padding are not supported.
-
-        Returns:
-            h: (B, L, D, E)
-                A tensor of the output embeddings for each lookahead token.
-                The embeddings are offset by 1, so the output embedding for
-                the input <|endofthought|> token is the embedding of the first
-                lookahead token.
         """
-        # x is (B, L, M = 1 + T + 2 + D)
-        b, l, m = x.shape
+        b, l, a = x.shape
+        assert a == self.lookahead_tokens
 
-        # the batch of sequences without any thoughts
-        x_init = x[:, :, :1].transpose(1, 2).reshape(b, l)
+        m = key_value_cache[0][0].size(2)
+        assert m == l + 1 + self.thought_length
 
-        # a vanilla causal mask preventing attention to previous tokens in each sequence
-        init_causal_mask = torch.triu(
-            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
-            diagonal=1,
-        )
-        init_causal_mask = expand_dims(init_causal_mask, (0, 1)).repeat(b, 1, 1, 1)
-        init_position_ids = (
-            torch.arange(0, l, dtype=torch.int64, device=self.device)
-            .reshape(1, l)
-            .repeat(b, 1)
-        )
-
-        # we evaluate the model on the sequences without thoughts
-        # to get the key value caches
-        result = self.model(
-            x_init,
-            attention_mask=init_causal_mask,
-            position_ids=init_position_ids,
-            output_attentions=False,
-            output_hidden_states=False,
-            use_cache=True,
-        )
-
-        # expand the key value caches to have one copy per position in each sequence
-        past_key_values = tuple(
-            (key.tile(l, 1, 1, 1), value.tile(l, 1, 1, 1))
-            for key, value in result.past_key_values
-        )
-
-        # this part of the causal mask will prevent thought tokens from
+        # this part of the causal mask will prevent lookahead tokens from
         # attending to later tokens in the original (thought-free) sequence
         # this part of the mask actually governs attention to the tokens
         # represented by the key-value cache
@@ -187,201 +145,119 @@ class QwenThoughtModel(PretrainedThoughtModel):
             diagonal=1,
         )
         causal_mask1 = expand_dims(causal_mask1, (0, 1, 3))
-        # this part of the causal mask will prevent thought tokens from
+
+        # this part of the causal mask allows all lookahead tokens to attend to
+        # all thought tokens (and start thought token)
+        causal_mask2 = torch.zeros(
+            (b, 1, l, a, 1 + self.thought_length), dtype=self._dtype, device=self.device
+        )
+        # this part of the causal mask will prevent lookahead tokens from
         # attending to later tokens in the same thought
-        causal_mask2 = torch.triu(
-            torch.full(
-                (m - 1, m - 1), float("-inf"), dtype=self._dtype, device=self.device
-            ),
+        causal_mask3 = torch.triu(
+            torch.full((a, a), float("-inf"), dtype=self._dtype, device=self.device),
             diagonal=1,
         )
-        causal_mask2 = expand_dims(causal_mask2, (0, 1, 2))
+        causal_mask3 = expand_dims(causal_mask3, (0, 1, 2))
 
-        # combine the two masks and absorb the sequence length dimension
+        # combine the three masks and absorb the sequence length dimension
         # into the batch dimension, for example, at the first token in the sequence
-        # the mask for a three token sequence will be
-        #   [0., -inf, -inf, 0., -inf, -inf, -inf, ...]
-        #   [0., -inf, -inf, 0., 0., -inf, -inf, ...]
-        #   [0., -inf, -inf, 0., 0., 0., -inf, ...]
-        #   ...
-        causal_mask1 = causal_mask1.repeat(b, 1, 1, causal_mask2.size(3), 1)
-        causal_mask2 = causal_mask2.repeat(b, 1, causal_mask1.size(2), 1, 1)
+        # the mask for a three token sequence with thought length two and
+        # four lookahead tokens will be
+        #   [0., -inf, -inf, 0, 0, 0, 0, -inf, -inf, -inf]
+        #   [0., -inf, -inf, 0, 0, 0, 0, 0, -inf, -inf]
+        #   [0., -inf, -inf, 0, 0, 0, 0, 0, 0, -inf]
+        #   [0., -inf, -inf, 0, 0, 0, 0, 0, 0, 0]
+        causal_mask1 = causal_mask1.repeat(b, 1, 1, a, 1)
+        causal_mask3 = causal_mask3.repeat(b, 1, l, 1, 1)
         causal_mask = (
-            torch.concatenate([causal_mask1, causal_mask2], dim=-1)
+            torch.concatenate([causal_mask1, causal_mask2, causal_mask3], dim=-1)
             .transpose(1, 2)
-            .reshape(b * l, 1, causal_mask1.size(3), -1)
+            .reshape(b * l, 1, a, m + a)
             .contiguous()
         )
 
         # these are only the position ids for the tokens in x2
         # they do not include the positions for the tokens represented
         # by the key-value cache
-        row = torch.arange(1, m, dtype=torch.int64, device=self.device).reshape(
-            1, m - 1
-        )
+        row = torch.arange(
+            self.thought_length + 2,
+            self.thought_length + 2 + a,
+            dtype=torch.int64,
+            device=self.device,
+        ).reshape(1, a)
         offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
         position_ids = (
             (row + offset)
-            .reshape((1, l, m - 1))
+            .reshape((1, l, a))
             .tile((b, 1, 1))
-            .reshape(b * l, m - 1)
+            .reshape(b * l, a)
             .contiguous()
         )
 
-        x2 = x[:, :, 1:].reshape(b * l, m - 1)
+        # x together with the key_value_cache makes this model evaluation
+        # effectively of a tensor of a batch of B sequences of input IDs of
+        # length L with thoughts at each location in the sequence. The thoughts
+        # include the token from the sequence, the start thought token,
+        # the thought, the end thought token, and the lookahead tokens.
 
+        # For example, if there are two lookahead tokens:
+
+        # token1 <|startofthought|> ... <|endofthought|> token2 token3
+        # token2 <|startofthought|> ... <|endofthought|> token3 token4
+        # token3 <|startofthought|> ... <|endofthought|> token4 token5
+        # ...
         result = self.model(
-            x2,
+            x.reshape(b * l, a),
             attention_mask=causal_mask,
             position_ids=position_ids,
-            past_key_values=past_key_values,
+            past_key_values=key_value_cache,
             output_attentions=False,
             output_hidden_states=True,
         )
 
         h = result.hidden_states[-1]
-        h = h.reshape(b, l, h.size(1), h.size(2))
-        h = h[:, :, -(self.lookahead_tokens + 1) : -1]
+        h = h.reshape(b, l, a, self.embed_dim)
 
         return h
-
-    def hidden_states_v2(self, x: torch.Tensor) -> torch.Tensor:
-        # x is (B, L, M = 1 + T + 2 + D)
-        b, l, m = x.shape
-
-        causal_mask1 = torch.triu(
-            torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
-            diagonal=1,
-        )
-        causal_mask1 = expand_dims(causal_mask1, (0, 1, 3))
-        causal_mask2 = torch.triu(
-            torch.full(
-                (m, m - 1), float("-inf"), dtype=self._dtype, device=self.device
-            ),
-            diagonal=0,
-        )
-        causal_mask2 = expand_dims(causal_mask2, (0, 1, 2))
-
-        causal_mask1 = causal_mask1.repeat(
-            b, self.num_heads, 1, causal_mask2.size(3), 1
-        )
-        causal_mask2 = causal_mask2.repeat(
-            b, self.num_heads, causal_mask1.size(2), 1, 1
-        )
-        causal_mask = (
-            torch.concatenate([causal_mask1, causal_mask2], dim=-1)
-            .reshape(b, self.num_heads * l, causal_mask1.size(3), -1)
-            .contiguous()
-        )
-
-        row = torch.arange(0, m, dtype=torch.int64, device=self.device).reshape(1, m)
-        offset = torch.arange(0, l, dtype=torch.int64, device=self.device).reshape(l, 1)
-        position_ids = (
-            (row + offset)
-            .reshape(1, 1, l, m)
-            .tile((b, self.num_heads, 1, 1))
-            .reshape(b, self.num_heads * l, m)
-            .contiguous()
-        )
-
-        x = self.tok_emb(x)
-
-        for layer in self.layers:
-            residual = x
-            x = layer.input_layernorm(x)
-
-            q = (
-                self.bfloat_safe_apply(layer.self_attn.q_proj, x)
-                .reshape(b, l, m, self.num_heads, -1)
-                .permute([0, 3, 1, 2, 4])
-                .reshape(b, self.num_heads * l, m, -1)
-            )
-            k1 = (
-                self.bfloat_safe_apply(layer.self_attn.k_proj, x[:, :, :1, :])
-                .reshape(b, l, 1, self.num_heads, self.head_dim)
-                .permute([0, 3, 1, 2, 4])
-                .reshape(b, self.num_heads * l, 1, self.head_dim)
-                .repeat(1, 1, l, 1)
-            )
-            k2 = (
-                self.bfloat_safe_apply(layer.self_attn.k_proj, x[:, :, 1:, :])
-                .reshape(b, l, m - 1, self.num_heads, self.head_dim)
-                .permute([0, 3, 1, 2, 4])
-                .reshape(b, self.num_heads * l, m - 1, self.head_dim)
-            )
-            v1 = (
-                self.bfloat_safe_apply(layer.self_attn.v_proj, x[:, :, :1, :])
-                .reshape(b, l, 1, self.num_heads, self.head_dim)
-                .permute([0, 3, 2, 1, 4])
-                .repeat(1, 1, l, 1, 1)
-                .reshape(b, self.num_heads * l, l, self.head_dim)
-            )
-            v2 = (
-                self.bfloat_safe_apply(layer.self_attn.v_proj, x[:, :, 1:, :])
-                .reshape(b, l, m - 1, self.num_heads, self.head_dim)
-                .permute([0, 3, 1, 2, 4])
-                .reshape(b, self.num_heads * l, m - 1, self.head_dim)
-            )
-
-            # apply rotary embedding
-            cos, sin = layer.self_attn.rotary_emb(v1, seq_len=l + m)
-            q = self.apply_rotary_pos_emb(q, cos, sin, position_ids)
-            k1 = self.apply_rotary_pos_emb(k1, cos, sin, position_ids[:, :, :1])
-            k2 = self.apply_rotary_pos_emb(k2, cos, sin, position_ids[:, :, 1:])
-
-            k1 = (
-                k1.reshape(b, self.num_heads, l, l, self.head_dim)
-                .transpose(2, 3)
-                .reshape(b, self.num_heads * l, l, self.head_dim)
-            )
-
-            k = torch.concatenate([k1, k2], dim=-2)
-            v = torch.concatenate([v1, v2], dim=-2)
-
-            attn_out = torch.nn.functional.scaled_dot_product_attention(
-                q, k, v, attn_mask=causal_mask
-            )
-
-            attn_out = (
-                attn_out.reshape(b, self.num_heads, l, m, self.head_dim)
-                .permute([0, 2, 3, 1, 4])
-                .reshape(b, l, m, self.embed_dim)
-            )
-            attn_out = self.bfloat_safe_apply(layer.self_attn.o_proj, attn_out)
-            x = residual + attn_out
-            x = x + layer.mlp(layer.post_attention_layernorm(x))
-        # (B, L, M, E)
-        h = self.ln(x)
-
-        # only keep the hidden states which we care about
-        h = h[:, :, -(self.lookahead_tokens + 1) : -1]
-
-        return h
-
-    def bfloat_safe_apply(
-        self, layer: torch.nn.Linear, x: torch.Tensor
-    ) -> torch.Tensor:
-        if x.dtype != torch.bfloat16:
-            return layer(x)
-        shape = x.shape
-        return layer(x.reshape(-1, shape[-1])).reshape(shape)
 
     def generate_next_thought_token(
         self,
         x: torch.Tensor,
         t: int,
-        activation_cache: list[dict[str, torch.Tensor]] | None = None,
-    ) -> tuple[torch.Tensor, list[dict[str, torch.Tensor]]]:
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Generate one new thought token at every position in the sequences
         of `x` given that there are already `t` thought tokens.
 
         This currently requires `x` to have no padding tokens.
+
+        Args:
+            x: (B, L, D)
+                A tensor where D = 2 when t = 0 because x includes both
+                the token of the original sequence and a start thought token
+                at each position in the original sequence. When t > 0, D = 1
+                and the key_value_cache contains the keys and values needed
+                to incorporate information from earlier in the thoughts.
+            t: (int)
+                The number of thought tokens already generated before this
+                call to generate_next_thought_token()
+            key_value_cache: (list[tuple[torch.Tensor, torch.Tensor]] | None)
+                A list of (key, value) pairs for each layer in the model or
+                None if this is the first call to generate_next_thought_token().
+        Returns:
+            logits: (torch.Tensor)
+               The logits at the positions in the sequence represented by `x`
+            key_value_cache: (list[tuple[torch.Tensor, torch.Tensor]])
+                A list of (key, value) pairs for each layer in the model.
+                The cache entries have shape (B * L, num_heads, L + D - 1 + t, head_dim)
+                despite `x` having three axes (so we would expect the cache entries
+                to have five axes) because the first two axes are folded together
         """
         b, l, d = x.shape
 
-        if activation_cache is None:
-            activation_cache = [{} for _ in range(len(self.layers))]
+        if key_value_cache is None:
+            key_value_cache = []
 
         causal_mask1 = torch.triu(
             torch.full((l, l), float("-inf"), dtype=self._dtype, device=self.device),
@@ -431,10 +307,10 @@ class QwenThoughtModel(PretrainedThoughtModel):
         x = x.reshape(b * l, d)
         x = self.tok_emb(x)
 
+        cos, sin = self.layers[0].self_attn.rotary_emb(x, seq_len=l + t + 1)
         for i, layer in enumerate(self.layers):
             residual = x
             x = layer.input_layernorm(x)
-            cos, sin = layer.self_attn.rotary_emb(x, seq_len=l + t + 1)
             q = (
                 layer.self_attn.q_proj(x)
                 .reshape(b * l, d, self.num_query_heads, self.head_dim)
@@ -450,11 +326,13 @@ class QwenThoughtModel(PretrainedThoughtModel):
                 .reshape(b * l, d, self.num_kv_heads, self.head_dim)
                 .transpose(1, 2)
             )
-            if activation_cache[i]:
+            if len(key_value_cache) > i:
                 q = self.apply_rotary_pos_emb(q, cos, sin, q_position_ids)
                 k = self.apply_rotary_pos_emb(k, cos, sin, k_position_ids)
-                k = torch.concatenate([activation_cache[i]["k"], k], dim=-2)
-                v = torch.concatenate([activation_cache[i]["v"], v], dim=-2)
+                k = torch.concatenate([key_value_cache[i][0], k], dim=-2)
+                v = torch.concatenate([key_value_cache[i][1], v], dim=-2)
+
+                key_value_cache[i] = (k, v)
             else:
                 k1 = k[:, :, :1].repeat(1, 1, l, 1)
                 k2 = k[:, :, 1:]
@@ -481,8 +359,7 @@ class QwenThoughtModel(PretrainedThoughtModel):
                 k = torch.concatenate([k1, k2], dim=-2)
                 v = torch.concatenate([v1, v2], dim=-2)
 
-            activation_cache[i]["k"] = k
-            activation_cache[i]["v"] = v
+                key_value_cache.append((k, v))
 
             k = k.repeat_interleave(self.num_gqa_groups, dim=1)
             v = v.repeat_interleave(self.num_gqa_groups, dim=1)
@@ -502,10 +379,10 @@ class QwenThoughtModel(PretrainedThoughtModel):
         h = self.ln(x).reshape(b, l, d, -1)
         logits = self.lm_head(h)
 
-        assert activation_cache is not None
+        assert key_value_cache is not None
 
         # (B, L, D, vocab_size)
-        return logits, activation_cache
+        return logits, key_value_cache
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         decay = []

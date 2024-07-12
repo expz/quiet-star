@@ -178,24 +178,31 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def hidden_states(self, x: torch.Tensor) -> torch.Tensor:
-        pass
-
-    @abc.abstractmethod
     def generate_next_thought_token(
         self,
         x: torch.Tensor,
         t: int,
-        activation_cache: list[dict[str, torch.Tensor]] | None = None,
-    ) -> tuple[torch.Tensor, list[dict[str, torch.Tensor]]]:
+        key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+    ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         pass
 
-    def generate_thoughts(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def generate_thoughts(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x: (B, L)
+                A tensor of token ids, where B is the batch size and L is the length of the sequence
+        Returns:
+            thought_logits: (B, L, T, vocab_size)
+            h_lookahead: (B, L, T, embed_dim)
+            x: (B, L, 1 + T + 2 + A)
+        """
         b, l = x.shape
 
         # only generate thoughts for tokens which have enough lookahead tokens
         n = self.thought_length + 2 + self.lookahead_tokens
-        lpp = min(self.train_max_length - n, l - (self.lookahead_tokens - 1))
+        lpp = min(self.train_max_length - n, l - self.lookahead_tokens)
 
         start_token = torch.full(
             (b, lpp, 1),
@@ -224,28 +231,43 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         x = torch.concatenate([x, start_token], dim=2)
         next_tokens = x
 
-        activation_cache = None
+        key_value_cache = None
         thought_logits = None
-        for t in range(1, self.thought_length + 1):
-            logits, activation_cache = self.generate_next_thought_token(
-                next_tokens, t, activation_cache
+        # we do one extra iteration to pass the final thought token
+        # through the model to update the key_value_cache, but we do not
+        # save the output because we force the subsequent token to be an
+        # end thought token
+        for t in range(1, self.thought_length + 2):
+            logits, key_value_cache = self.generate_next_thought_token(
+                next_tokens, t, key_value_cache
             )
-            if t == 1:
-                thought_logits = logits[:, :, -1:]
-            else:
-                thought_logits = torch.concatenate(
-                    [thought_logits, logits[:, :, -1:]], dim=2
-                )
-            next_tokens = self.sample_next_token(logits[:, :, -1])
-            x = torch.concatenate([x, next_tokens], dim=-1)
+            if t <= self.thought_length:
+                if t == 1:
+                    thought_logits = logits[:, :, -1:]
+                else:
+                    thought_logits = torch.concatenate(
+                        [thought_logits, logits[:, :, -1:]], dim=2
+                    )
+                next_tokens = self.sample_next_token(logits[:, :, -1]).detach()
+                x = torch.concatenate([x, next_tokens], dim=-1)
 
         # (B, L, 1 + T + 2 + A)
         x = torch.concatenate([x, end_token, lookahead], dim=-1)
 
         # (B, L, T)
         assert thought_logits is not None
+        assert key_value_cache is not None
 
-        return thought_logits, x
+        lookahead_input = torch.concatenate([end_token, lookahead[:, :, :-1]], dim=-1)
+        h_lookahead = self.lookahead_hidden_states(lookahead_input, key_value_cache)
+
+        return thought_logits, h_lookahead, x
+
+    @abc.abstractmethod
+    def lookahead_hidden_states(
+        self, x: torch.Tensor, key_value_cache: list[tuple[torch.Tensor, torch.Tensor]]
+    ) -> torch.Tensor:
+        pass
 
     def mixing_head(self, h: torch.Tensor, h_thought: torch.Tensor) -> torch.Tensor:
         x = torch.concatenate([h, h_thought], dim=-1)
@@ -341,12 +363,11 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
     def forward_pass(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         # Shortcut variables for asserting tensor shapes
-        b = inputs.shape[0]
+        b, l = inputs.shape
         n = self.num_thoughts
         t = self.thought_length
         a = self.lookahead_tokens
-        l = inputs.shape[1]
-        lp = min(l - (a - 1), self.train_max_length - (t + 2 + a))
+        lp = min(l - a, self.train_max_length - (t + 2 + a))
         e = self.embed_dim
         v = self.vocab_size
 
@@ -354,7 +375,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         assert_shape(targets, (b, l))
 
         offset_max = min(
-            inputs.shape[-1] - (self.lookahead_tokens - 1),
+            inputs.size(1) - self.lookahead_tokens,
             self.train_max_length - (self.thought_length + 2 + self.lookahead_tokens),
         )
 
@@ -374,24 +395,25 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         inputs = inputs.repeat(self.num_thoughts, 1)
         assert_shape(inputs, (b * n, l))
 
-        logits_thought, input_with_thoughts = self.generate_thoughts(inputs)
+        logits_thought, h_lookahead, input_with_thoughts = self.generate_thoughts(
+            inputs
+        )
         input_with_thoughts = input_with_thoughts.detach()
         assert_shape(logits_thought, (b * n, lp, t, v))
         assert_shape(input_with_thoughts, (b * n, lp, 1 + t + 2 + a))
-        h_thought = self.hidden_states(input_with_thoughts)
-        assert_shape(h_thought, (b * n, lp, a, e))
-        logits_lookahead = self.lm_head(h_thought)
+        assert_shape(h_lookahead, (b * n, lp, a, e))
+        logits_lookahead = self.lm_head(h_lookahead)
         assert_shape(logits_lookahead, (b * n, lp, a, v))
 
         # Calculate mixing weight
         h = h.repeat(self.num_thoughts, 1, 1, 1)
         assert_shape(h, (b * n, lp, a, e))
-        w = self.mixing_head(h, h_thought)
+        w = self.mixing_head(h, h_lookahead)
         assert_shape(w, (b * n, lp, a, 1))
 
         del inputs
         del h
-        del h_thought
+        del h_lookahead
 
         # Calculate final logits
         # logits: (B * N, L - A, A, V), N = num thoughts, A = lookahead length

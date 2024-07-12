@@ -83,7 +83,7 @@ class QwenDefaultModelConfig(ModelConfig):
 
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: str = "bfloat16"
-    train_max_length: int = 80
+    train_max_length: int = 92
     model_name: str = "Qwen/Qwen2-0.5B-Instruct"
     tokenizer_name: str = "Qwen/Qwen2-0.5B-Instruct"
 
