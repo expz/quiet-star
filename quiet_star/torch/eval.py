@@ -499,20 +499,27 @@ def eval_pretrained(
     cls: Type[PretrainedThoughtModel],
     version: int,
     epoch: Optional[int] = None,
+    step: Optional[int] = None,
     limit: Optional[int] = None,
 ) -> None:
-    if epoch is None:
-        path = f"lightning_logs/version_{version}/checkpoints/epoch=*"
-        fnames = glob.glob(path)
+    if step is None:
+        if epoch is None:
+            path = f"lightning_logs/version_{version}/checkpoints/epoch=*"
+            fnames = glob.glob(path)
+        else:
+            path = f"lightning_logs/version_{version}/checkpoints/epoch={epoch}-*"
+            fnames = glob.glob(path)
+            if len(fnames) > 1:
+                print(
+                    f"WARNING: There were multiple checkpoints for epoch {epoch}. Choosing the most recent one."
+                )
+        fnames.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        checkpoint = fnames[0]
     else:
-        path = f"lightning_logs/version_{version}/checkpoints/epoch={epoch}-*"
-        fnames = glob.glob(path)
-        if len(fnames) > 1:
-            print(
-                f"WARNING: There were multiple checkpoints for epoch {epoch}. Choosing the most recent one."
-            )
-    fnames.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-    checkpoint = fnames[0]
+        assert (
+            epoch is not None
+        ), "if you specify a step, you also need to specify an epoch"
+        checkpoint = f"lightning_logs/version_{version}/checkpoints/epoch={epoch}-step={step}.ckpt"
 
     model = cls.load_from_checkpoint(checkpoint)
 
@@ -537,19 +544,24 @@ def eval_pretrained(
         task_manager=task_manager,
         device="cuda:0",
         limit=limit,
-        log_samples=True,
     )
 
     print(json.dumps(results, indent=4, sort_keys=True))
 
 
 def eval_openelm(
-    version: int, epoch: Optional[int] = None, limit: Optional[int] = None
+    version: int,
+    epoch: Optional[int] = None,
+    step: Optional[int] = None,
+    limit: Optional[int] = None,
 ) -> None:
-    return eval_pretrained(OpenELMThoughtModel, version, epoch, limit)
+    return eval_pretrained(OpenELMThoughtModel, version, epoch, step, limit)
 
 
 def eval_qwen(
-    version: int, epoch: Optional[int] = None, limit: Optional[int] = None
+    version: int,
+    epoch: Optional[int] = None,
+    step: Optional[int] = None,
+    limit: Optional[int] = None,
 ) -> None:
-    return eval_pretrained(QwenThoughtModel, version, epoch, limit)
+    return eval_pretrained(QwenThoughtModel, version, epoch, step, limit)

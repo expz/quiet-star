@@ -58,6 +58,10 @@ class Config:
     optimizer_warmup: int = 20
     # weight of the policy loss
     policy_weight: float = 1e6
+    # number of hours between saving checkpoints
+    save_interval_hours: float = 4
+    # keep the last `save_top_k` checkpoints or -1 to keep all checkpoints
+    save_top_k: int = -1
     # seed for random number generators
     seed: int = 123
     # length of thought to generate

@@ -1,7 +1,9 @@
+import datetime
+
 import lightning.pytorch
 import torch
 import torch.utils.data
-from lightning.pytorch.callbacks import RichProgressBar
+from lightning.pytorch.callbacks import ModelCheckpoint, RichProgressBar
 
 from quiet_star.config import Config, GPTConfig
 from quiet_star.dataset import _format_tokenizer_name, get_open_web_math_dataset
@@ -30,12 +32,16 @@ def _train(
     test_dataloader = torch.utils.data.DataLoader(
         dataset["test"], batch_size=config.batch_size
     )
+    checkpoint_callback = ModelCheckpoint(
+        train_time_interval=datetime.timedelta(hours=config.save_interval_hours),
+        save_top_k=config.save_top_k,
+    )
 
     trainer = lightning.pytorch.Trainer(
         deterministic=True,
         accelerator="cpu" if config.model.device == "cpu" else "gpu",
         max_epochs=config.epochs,
-        callbacks=[RichProgressBar(leave=True)],
+        callbacks=[checkpoint_callback, RichProgressBar(leave=True)],
     )
 
     trainer.fit(model, train_dataloader, test_dataloader)

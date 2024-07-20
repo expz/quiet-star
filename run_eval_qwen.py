@@ -18,6 +18,8 @@ class EvalConfig:
     version: int = 0
     # epoch of checkpoint to load
     epoch: Optional[int] = None
+    # step of epoch of checkpoint to load
+    step: Optional[int] = None
     # limit number of samples to evalute on
     limit: Optional[int] = None
 
@@ -30,7 +32,7 @@ def parse_args() -> EvalConfig:
 
 
 def main(config: EvalConfig) -> None:
-    eval_qwen(config.version, config.epoch, config.limit)
+    eval_qwen(config.version, config.epoch, config.step, config.limit)
 
 
 if __name__ == "__main__":
