@@ -560,8 +560,7 @@ def eval_pretrained(
     model_name: str | None = None,
     tokenizer_name: str | None = None,
 ) -> None:
-    use_thoughts = version == -1
-    if use_thoughts:
+    if version == -1:
         print(f"loading untrained model")
         assert model_name is not None
         assert tokenizer_name is not None
@@ -595,7 +594,7 @@ def eval_pretrained(
         log_samples=True,
         apply_chat_template=True,
         system_instruction="You are a helpful and confident assistant. Think step-by-step.\n",
-        gen_kwargs=f"use_thoughts={use_thoughts}",
+        gen_kwargs=f"use_thoughts={version >= 0}",
         # gen_kwargs="do_sample=True,temperature=0.7",
     )
 

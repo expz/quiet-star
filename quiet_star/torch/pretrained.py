@@ -736,7 +736,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         do_sample: bool = False,
         top_k: float | None = None,
         top_p: float | None = None,
-        temp: float = 1.0,
+        temperature: float = 1.0,
     ) -> torch.Tensor:
         """
         Generate new tokens using the model.
@@ -774,7 +774,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             do_sample,
             top_k,
             top_p,
-            temp,
+            temperature,
         )
 
     def training_step(self, batch: dict[str, torch.Tensor], batch_idx: int) -> float:
