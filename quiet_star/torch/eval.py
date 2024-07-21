@@ -12,6 +12,7 @@ import lm_eval.utils
 import torch
 import torch.nn.functional as F
 import tqdm
+from transformers import AutoTokenizer
 
 from quiet_star.config import (  # Used by load_from_checkpoint()
     Config,
@@ -37,12 +38,20 @@ class LMEvalWrapper(lm_eval.api.model.LM):
     ) -> None:
         super().__init__()
         self.model = model
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model.tokenizer_name,
+            trust_remote_code=True,
+        )
         self.batch_size = batch_size
         self.add_bos_token = add_bos_token
         self._max_length = max_length
         self.truncation = truncation
         self.prefix_token_id = prefix_token_id
         self.logits_cache = logits_cache
+
+    @property
+    def tokenizer_name(self) -> str:
+        return self.model.tokenizer_name
 
     @property
     def eos_token(self) -> str:
@@ -67,6 +76,16 @@ class LMEvalWrapper(lm_eval.api.model.LM):
     def world_size(self) -> int:
         # for simplicity we do not currently support multiple GPUs
         return 1
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+    ) -> str:
+        return self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     def _model_generate(
         self, context: torch.Tensor, max_length: int, **generation_kwargs: Any

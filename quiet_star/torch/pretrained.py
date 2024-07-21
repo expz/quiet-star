@@ -35,6 +35,8 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             trust_remote_code=True,
         )
         self.model = model
+        self.model_name = config.model.model_name
+        self.tokenizer_name = config.model.tokenizer_name
 
         self.num_thoughts = config.num_thoughts
         self.thought_length = config.thought_length
