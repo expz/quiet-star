@@ -71,12 +71,12 @@ class Config:
     # strength of the weight decay of the Adam optimizer
     weight_decay: float = 0.001
 
-    model: ModelConfig = ModelConfig()
+    model: ModelConfig = dataclasses.field(default_factory=ModelConfig)
 
 
 @dataclasses.dataclass
 class GPTConfig(Config):
-    model: GPTModelConfig = GPTModelConfig()
+    model: GPTModelConfig = dataclasses.field(default_factory=GPTModelConfig)
 
 
 @dataclasses.dataclass
@@ -106,7 +106,9 @@ class QwenDefaultConfig(Config):
     seed: int = 1
     thought_length: int = 8
 
-    model: QwenDefaultModelConfig = QwenDefaultModelConfig()
+    model: QwenDefaultModelConfig = dataclasses.field(
+        default_factory=QwenDefaultModelConfig
+    )
 
 
 @dataclasses.dataclass
@@ -136,4 +138,38 @@ class OpenELMDefaultConfig(Config):
     seed: int = 1
     thought_length: int = 8
 
-    model: OpenELMDefaultModelConfig = OpenELMDefaultModelConfig()
+    model: OpenELMDefaultModelConfig = dataclasses.field(
+        default_factory=OpenELMDefaultModelConfig
+    )
+
+
+@dataclasses.dataclass
+class EvalConfig:
+    """
+    Configuration for evaluating a model.
+    """
+
+    # version of model to load (see the lightning_logs directory) or -1 for untrained model
+    version: int = 0
+    # epoch of checkpoint to load
+    epoch: int | None = None
+    # step of epoch of checkpoint to load
+    step: int | None = None
+    # limit number of samples to evalute on
+    limit: int | None = None
+    # HuggingFace model name if using untrained model
+    model_name: str | None = None
+    # HuggingFace tokenizer name if using untrained model
+    tokenizer_name: str | None = None
+
+
+@dataclasses.dataclass
+class QwenDefaultEvalConfig(EvalConfig):
+    model_name: str = "Qwen/Qwen2-0.5B-Instruct"
+    tokenizer_name: str = "Qwen/Qwen2-0.5B-Instruct"
+
+
+@dataclasses.dataclass
+class OpenELMDefaultEvalConfig(EvalConfig):
+    model_name: str = "apple/OpenELM-270M-Instruct"
+    tokenizer_name: str = "meta-llama/Llama-2-7b-hf"

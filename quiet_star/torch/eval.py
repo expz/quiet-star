@@ -81,7 +81,7 @@ class LMEvalWrapper(lm_eval.api.model.LM):
         if do_sample is False and generation_kwargs["temperature"] == 0.0:
             generation_kwargs.pop("temperature")
 
-        return self.model.thoughtful_generate(
+        return self.model.generate(
             context, max_new_tokens=max_length, **generation_kwargs
         )
 
@@ -495,33 +495,62 @@ class LMEvalWrapper(lm_eval.api.model.LM):
         return res
 
 
-def eval_pretrained(
-    cls: Type[PretrainedThoughtModel],
-    version: int,
-    epoch: Optional[int] = None,
-    step: Optional[int] = None,
-    limit: Optional[int] = None,
-) -> None:
-    if step is None:
-        if epoch is None:
-            path = f"lightning_logs/version_{version}/checkpoints/epoch=*"
-            fnames = glob.glob(path)
-        else:
-            path = f"lightning_logs/version_{version}/checkpoints/epoch={epoch}-*"
-            fnames = glob.glob(path)
-            if len(fnames) > 1:
-                print(
-                    f"WARNING: There were multiple checkpoints for epoch {epoch}. Choosing the most recent one."
-                )
-        fnames.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-        checkpoint = fnames[0]
-    else:
+def get_checkpoint_path(
+    version: int, epoch: int | None = None, step: int | None = None
+) -> str:
+    if step is not None:
         assert (
             epoch is not None
         ), "if you specify a step, you also need to specify an epoch"
-        checkpoint = f"lightning_logs/version_{version}/checkpoints/epoch={epoch}-step={step}.ckpt"
+        return f"lightning_logs/version_{version}/checkpoints/epoch={epoch}-step={step}.ckpt"
 
-    model = cls.load_from_checkpoint(checkpoint)
+    if epoch is not None:
+        path = f"lightning_logs/version_{version}/checkpoints/epoch={epoch}-*"
+    else:
+        path = f"lightning_logs/version_{version}/checkpoints/epoch=*"
+
+    fnames = glob.glob(path)
+    if len(fnames) > 1:
+        print(
+            f"INFO: There were multiple checkpoints for epoch {epoch}. Choosing the most recent one."
+        )
+    fnames.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    return fnames[0]
+
+
+def load_status_quo_model(
+    cls: Type[PretrainedThoughtModel], model_name: str, tokenizer_name: str
+) -> PretrainedThoughtModel:
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    config = Config(
+        model=ModelConfig(
+            device=device,
+            model_name=model_name,
+            tokenizer_name=tokenizer_name,
+        ),
+    )
+    return cls(config).to(config.model.device)
+
+
+def eval_pretrained(
+    cls: Type[PretrainedThoughtModel],
+    version: int,
+    epoch: int | None = None,
+    step: int | None = None,
+    limit: int | None = None,
+    model_name: str | None = None,
+    tokenizer_name: str | None = None,
+) -> None:
+    use_thoughts = version == -1
+    if use_thoughts:
+        print(f"loading untrained model")
+        assert model_name is not None
+        assert tokenizer_name is not None
+        model = load_status_quo_model(cls, model_name, tokenizer_name)
+    else:
+        checkpoint = get_checkpoint_path(version, epoch, step)
+        print(f"loading checkpoint from {checkpoint}")
+        model = cls.load_from_checkpoint(checkpoint)
 
     model.eval()
 
@@ -537,13 +566,18 @@ def eval_pretrained(
     # Setting `task_manager` to the one above is optional and should generally be done
     # if you want to include tasks from paths other than ones in `lm_eval/tasks`.
     # `simple_evaluate` will instantiate its own task_manager if it is set to None here.
-    results = lm_eval.simple_evaluate(  # call simple_evaluate
+    results = lm_eval.simple_evaluate(
         model=eval_model,
         tasks=["gsm8k"],
         num_fewshot=0,
         task_manager=task_manager,
         device="cuda:0",
         limit=limit,
+        log_samples=True,
+        apply_chat_template=True,
+        system_instruction="You are a helpful and confident assistant. Think step-by-step.\n",
+        gen_kwargs=f"use_thoughts={use_thoughts}",
+        # gen_kwargs="do_sample=True,temperature=0.7",
     )
 
     print(json.dumps(results, indent=4, sort_keys=True))
@@ -551,17 +585,25 @@ def eval_pretrained(
 
 def eval_openelm(
     version: int,
-    epoch: Optional[int] = None,
-    step: Optional[int] = None,
-    limit: Optional[int] = None,
+    epoch: int | None = None,
+    step: int | None = None,
+    limit: int | None = None,
+    model_name: str | None = None,
+    tokenizer_name: str | None = None,
 ) -> None:
-    return eval_pretrained(OpenELMThoughtModel, version, epoch, step, limit)
+    return eval_pretrained(
+        OpenELMThoughtModel, version, epoch, step, limit, model_name, tokenizer_name
+    )
 
 
 def eval_qwen(
     version: int,
-    epoch: Optional[int] = None,
-    step: Optional[int] = None,
-    limit: Optional[int] = None,
+    epoch: int | None = None,
+    step: int | None = None,
+    limit: int | None = None,
+    model_name: str | None = None,
+    tokenizer_name: str | None = None,
 ) -> None:
-    return eval_pretrained(QwenThoughtModel, version, epoch, step, limit)
+    return eval_pretrained(
+        QwenThoughtModel, version, epoch, step, limit, model_name, tokenizer_name
+    )

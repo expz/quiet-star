@@ -280,7 +280,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         do_sample: bool = False,
         top_k: float | None = None,
         top_p: float | None = None,
-        temp: float = 1.0,
+        temperature: float = 1.0,
         suppress: list[int] = [],
     ) -> torch.Tensor:
         """
@@ -302,7 +302,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         if do_sample:
             # Apply temperature
-            logits = logits / temp
+            logits = logits / temperature
 
             # Top-k sampling
             if top_k is not None:
@@ -325,7 +325,10 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                 masked_logits = torch.log(probs)
 
             # Sample from the distribution
-            return torch.distributions.categorical.Categorical(logits=logits).sample()
+            b = logits.size(0)
+            return torch.distributions.categorical.Categorical(logits=logits).sample(
+                sample_shape=(b,)
+            )
 
         return torch.argmax(logits, dim=-1, keepdim=True)
 
@@ -469,7 +472,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         do_sample: bool = False,
         top_k: float | None = None,
         top_p: float | None = None,
-        temp: float = 1.0,
+        temperature: float = 1.0,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         logits, _, key_value_cache = self.forward(
             x,
@@ -484,7 +487,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                 do_sample,
                 top_k,
                 top_p,
-                temp,
+                temperature,
                 suppress=[self.start_thought_token_id, self.end_thought_token_id],
             ),
             key_value_cache,
@@ -500,7 +503,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         do_sample: bool = False,
         top_k: float | None = None,
         top_p: float | None = None,
-        temp: float = 1.0,
+        temperature: float = 1.0,
     ) -> ForwardResult:
         b, l = x.shape
         if key_value_cache:
@@ -532,7 +535,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             do_sample,
             top_k,
             top_p,
-            temp,
+            temperature,
             suppress=[self.start_thought_token_id, self.end_thought_token_id],
         )
 
@@ -549,7 +552,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                 do_sample,
                 top_k,
                 top_p,
-                temp,
+                temperature,
                 suppress=[self.start_thought_token_id, self.end_thought_token_id],
             )
 
@@ -582,7 +585,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         do_sample: bool = False,
         top_k: float | None = None,
         top_p: float | None = None,
-        temp: float = 1.0,
+        temperature: float = 1.0,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
         """
         Generate a thought and then a token, returning just the token.
@@ -597,7 +600,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             do_sample: Whether to sample from the distribution or take the argmax.
             top_k: The number of top tokens to consider during sampling.
             top_p: The probability mass to consider during sampling.
-            temp: The temperature to apply to the logits during sampling.
+            temperature: The temperature to apply to the logits during sampling.
 
         Returns:
             The generated tokens of shape (batch_size,).
@@ -618,7 +621,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             do_sample=do_sample,
             top_k=top_k,
             top_p=top_p,
-            temp=temp,
+            temperature=temperature,
         )
 
         # appease mypy
@@ -635,7 +638,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                 do_sample,
                 top_k,
                 top_p,
-                temp,
+                temperature,
                 suppress=[self.start_thought_token_id, self.end_thought_token_id],
             ),
             key_value_cache,
@@ -726,6 +729,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         x: torch.Tensor,
         attention_mask: torch.Tensor,
         max_new_tokens: int,
+        use_thoughts: bool = True,
         stop: list[str] = [],
         do_sample: bool = False,
         top_k: float | None = None,
@@ -736,14 +740,15 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         Generate new tokens using the model.
 
         This method takes an input sequence of shape (batch_size, sequence_length) and generates
-        new tokens using the model's `generate_token` method. It continues generating
-        tokens until either `max_new_tokens` tokens have been generated or the model
-        outputs the end-of-sequence token.
+        new tokens using the model's `generate_token` or `generate_thoughtful_token` method. It
+        continues generating tokens until either `max_new_tokens` tokens have been generated
+        or the model outputs the end-of-sequence token.
 
         Args:
             x: The input sequence of tokens.
             attention_mask: The attention mask for the input sequence.
             max_new_tokens: The maximum number of new tokens to generate.
+            use_thoughts: Whether to generate a thought before generating each next token.
             stop: A list of strings to stop generation at.
             do_sample: Whether to sample from the distribution or take the argmax.
             top_k: The number of top tokens to consider during sampling.
@@ -753,52 +758,13 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         Returns:
             The generated tokens of shape (batch_size, sequence_length + max_new_tokens).
         """
+        if use_thoughts:
+            generator_func = self.generate_thoughtful_token
+        else:
+            generator_func = self.generate_token
+
         return self._generate(
-            self.generate_token,
-            x,
-            attention_mask,
-            max_new_tokens,
-            stop,
-            do_sample,
-            top_k,
-            top_p,
-            temp,
-        )
-
-    def thoughtful_generate(
-        self,
-        x: torch.Tensor,
-        attention_mask: torch.Tensor,
-        max_new_tokens: int,
-        stop: list[str] = [],
-        do_sample: bool = False,
-        top_k: float | None = None,
-        top_p: float | None = None,
-        temp: float = 1.0,
-    ) -> torch.Tensor:
-        """
-        Generate new tokens using the model.
-
-        This method takes an input sequence of shape (batch_size, sequence_length) and generates
-        new tokens using the model's `generate_thoughtful_token` method. It continues generating
-        tokens until either `max_new_tokens` tokens have been generated or the model
-        outputs the end-of-sequence token.
-
-        Args:
-            x: The input sequence of tokens.
-            attention_mask: The attention mask for the input sequence.
-            max_new_tokens: The maximum number of new tokens to generate.
-            stop: A list of strings to stop generation at.
-            do_sample: Whether to sample from the distribution or take the argmax.
-            top_k: The number of top tokens to consider during sampling.
-            top_p: The probability mass to consider during sampling.
-            temp: The temperature to apply to the logits during sampling.
-
-        Returns:
-            The generated tokens of shape (batch_size, sequence_length + max_new_tokens).
-        """
-        return self._generate(
-            self.generate_thoughtful_token,
+            generator_func,
             x,
             attention_mask,
             max_new_tokens,
