@@ -5,6 +5,7 @@ import torch
 import torch.utils.data
 from lightning.pytorch.callbacks import ModelCheckpoint, RichProgressBar
 
+import wandb
 from quiet_star.config import Config, GPTConfig
 from quiet_star.dataset import _format_tokenizer_name, get_open_web_math_dataset
 from quiet_star.torch.gpt import GPTModel

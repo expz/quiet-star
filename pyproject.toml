@@ -11,13 +11,16 @@ datasets = "^2.18.0"
 ipykernel = "^6.29.4"
 ipywidgets = "^8.1.2"
 lightning = "^2.2.1"
+lm-eval = "^0.4.2"
 mlx = [
     { platform = "darwin", version = "^0.9.1" },
 ]
 mypy = "^1.9.0"
+numpy = "^1.24.0"
 pip = "^24.0"
 rich = "^13.7.1"
 simple-parsing = "^0.1.5"
+tensorboard = "^2.17.0"
 torch = "^2.3.0"
 transformers = "^4.39.2"
 triton = "^2.3.0"
@@ -36,7 +39,7 @@ triton = "^2.3.0"
 # nvidia-nccl-cu12 = "2.20.5"
 # nvidia-nvjitlink-cu12 = "12.4.127"
 # nvidia-nvtx-cu12 = "12.1.105"
-lm-eval = "^0.4.2"
+wandb = "^0.17.5"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.3.0"

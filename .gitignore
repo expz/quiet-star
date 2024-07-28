@@ -1,6 +1,7 @@
 data/
 lightning_logs/
 lm_eval_output/
+wandb/
 .venv/
 .vscode/
 

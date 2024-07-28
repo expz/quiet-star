@@ -10,8 +10,10 @@ import torch.utils.data
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.modeling_utils import PreTrainedModel
 
+import wandb
 from quiet_star.config import Config
 from quiet_star.constants import END_THOUGHT_TOKEN, START_THOUGHT_TOKEN
+from quiet_star.torch.log import MetricLogger
 from quiet_star.torch.utils import assert_shape, torch_dtype
 
 
@@ -29,6 +31,8 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         self._dtype = torch_dtype(config.model.dtype)
 
+        self.metric_logger = MetricLogger(config.logger, config)
+
         model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             config.model.model_name,
             torch_dtype=self._dtype,
@@ -41,6 +45,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self.num_thoughts = config.num_thoughts
         self.thought_length = config.thought_length
         self.lookahead_tokens = config.lookahead_tokens
+        self.temperature = config.temperature
 
         self.train_max_length = config.model.train_max_length
         self.eval_max_length = self.train_max_length
@@ -189,7 +194,12 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         pass
 
     def generate_thoughts(
-        self, x: torch.Tensor
+        self,
+        x: torch.Tensor,
+        do_sample: bool = False,
+        top_k: int | None = None,
+        top_p: float | None = None,
+        temperature: float = 1.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
@@ -250,7 +260,15 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                     thought_logits = torch.concatenate(
                         [thought_logits, logits[:, :, -1:]], dim=2
                     )
-                next_tokens = self.sample_next_token(logits[:, :, -1]).detach()
+                torch.use_deterministic_algorithms(False)
+                next_tokens = self.sample_next_token(
+                    logits[:, :, -1, :],
+                    do_sample=do_sample,
+                    top_k=top_k,
+                    top_p=top_p,
+                    temperature=temperature,
+                ).detach()
+                torch.use_deterministic_algorithms(True)
                 x = torch.concatenate([x, next_tokens], dim=-1)
 
         # (B, L, 1 + T + 2 + A)
@@ -280,7 +298,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
     def sample_next_token(
         logits: torch.Tensor,
         do_sample: bool = False,
-        top_k: float | None = None,
+        top_k: int | None = None,
         top_p: float | None = None,
         temperature: float = 1.0,
         suppress: list[int] = [],
@@ -327,9 +345,10 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                 masked_logits = torch.log(probs)
 
             # Sample from the distribution
-            b = logits.size(0)
-            return torch.distributions.categorical.Categorical(logits=logits).sample(
-                sample_shape=(b,)
+            return (
+                torch.distributions.categorical.Categorical(logits=logits)
+                .sample()
+                .unsqueeze(-1)
             )
 
         return torch.argmax(logits, dim=-1, keepdim=True)
@@ -352,7 +371,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
     def calculate_loss(
         self, logits: torch.Tensor, targets: torch.Tensor, reduce: bool = True
-    ) -> float:
+    ) -> torch.Tensor:
         v = logits.shape[-1]
 
         # Reshape to calculate cross entropy; the 2D version runs at 50% of the speed of the below version
@@ -401,7 +420,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         assert_shape(inputs, (b * n, l))
 
         logits_thought, h_lookahead, input_with_thoughts = self.generate_thoughts(
-            inputs
+            inputs, do_sample=True, temperature=self.temperature
         )
         input_with_thoughts = input_with_thoughts.detach()
         assert_shape(logits_thought, (b * n, lp, t, v))
@@ -464,6 +483,27 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         # Calculate total loss averaging across batch, thought number and token position
         total_loss = torch.mean(loss + policy_loss).to(self._dtype)
 
+        self.metric_logger.log(
+            {
+                "mixing_weight_avg": w.mean().item(),
+                "mixing_weight_min": w.min().item(),
+                "mixing_weight_max": w.max().item(),
+                "loss_avg": loss.mean().item(),
+                "loss_min": loss.min().item(),
+                "loss_max": loss.max().item(),
+                "r_mean_avg": r_mean.mean().item(),
+                "r_mean_min": r_mean.min().item(),
+                "r_mean_max": r_mean.max().item(),
+                "reward_avg": reward.mean().item(),
+                "reward_min": reward.min().item(),
+                "reward_max": reward.max().item(),
+                "policy_loss_avg": policy_loss.mean().item(),
+                "policy_loss_min": policy_loss.min().item(),
+                "policy_loss_max": policy_loss.max().item(),
+                "total_loss": total_loss.item(),
+            }
+        )
+
         return total_loss
 
     def generate_token(
@@ -472,7 +512,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         attention_mask: torch.Tensor | None = None,
         key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         do_sample: bool = False,
-        top_k: float | None = None,
+        top_k: int | None = None,
         top_p: float | None = None,
         temperature: float = 1.0,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
@@ -503,7 +543,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         return_key_value_cache: bool = False,
         return_hidden_state: bool = False,
         do_sample: bool = False,
-        top_k: float | None = None,
+        top_k: int | None = None,
         top_p: float | None = None,
         temperature: float = 1.0,
     ) -> ForwardResult:
@@ -585,7 +625,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         attention_mask: torch.Tensor,
         key_value_cache: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
         do_sample: bool = False,
-        top_k: float | None = None,
+        top_k: int | None = None,
         top_p: float | None = None,
         temperature: float = 1.0,
     ) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
@@ -679,7 +719,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         max_new_tokens: int,
         stop: list[str] = [],
         do_sample: bool = False,
-        top_k: float | None = None,
+        top_k: int | None = None,
         top_p: float | None = None,
         temp: float = 1.0,
     ) -> torch.Tensor:
@@ -734,7 +774,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         use_thoughts: bool = True,
         stop: list[str] = [],
         do_sample: bool = False,
-        top_k: float | None = None,
+        top_k: int | None = None,
         top_p: float | None = None,
         temperature: float = 1.0,
     ) -> torch.Tensor:

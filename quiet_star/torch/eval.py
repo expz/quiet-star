@@ -592,8 +592,8 @@ def eval_pretrained(
         device="cuda:0",
         limit=limit,
         log_samples=True,
-        apply_chat_template=True,
-        system_instruction="You are a helpful and confident assistant. Think step-by-step.\n",
+        # apply_chat_template=True,
+        system_instruction="You are a helpful and confident assistant. Think step-by-step. Put your final answer at the end of your reasoning following a ####. For example, if the answer is 3, then end your response with #### 3.\n",
         gen_kwargs=f"use_thoughts={version >= 0}",
         # gen_kwargs="do_sample=True,temperature=0.7",
     )

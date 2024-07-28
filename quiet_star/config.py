@@ -1,7 +1,20 @@
 import dataclasses
-from typing import Tuple
+from typing import Any, Tuple
 
 import torch
+
+from quiet_star.constants import MetricLoggerBackend
+
+
+def flatten(d: dict[str, Any], parent_key: str | None = None) -> dict[str, Any]:
+    items: list[tuple[str, Any]] = []
+    for k, v in d.items():
+        new_key = f"{parent_key}.{k}" if parent_key is not None else k
+        if isinstance(v, dict):
+            items.extend(flatten(v, new_key).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
 
 @dataclasses.dataclass
@@ -48,6 +61,8 @@ class Config:
     epochs: int = 2
     # learning rate of adam optimizer
     learning_rate: float = 1e-6
+    # backend to use for logging metrics
+    logger: MetricLoggerBackend = MetricLoggerBackend.NONE
     # number of tokens to generate after the thought for checking the quality of the thought
     lookahead_tokens: int = 4
     # maximum number of samples in the combined training and validation datasets
@@ -64,14 +79,19 @@ class Config:
     save_top_k: int = -1
     # seed for random number generators
     seed: int = 123
-    # length of thought to generate
-    thought_length: int = 12
+    # temperature to use when sampling thoughts
+    temperature: float = 0.7
     # percent of samples to use for the validation set
     test_pct: float = 0.125
+    # length of thought to generate
+    thought_length: int = 12
     # strength of the weight decay of the Adam optimizer
     weight_decay: float = 0.001
 
     model: ModelConfig = dataclasses.field(default_factory=ModelConfig)
+
+    def as_dict(self) -> dict[str, Any]:
+        return flatten(dataclasses.asdict(self))
 
 
 @dataclasses.dataclass
