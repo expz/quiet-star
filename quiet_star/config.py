@@ -61,6 +61,8 @@ class Config:
     epochs: int = 2
     # learning rate of adam optimizer
     learning_rate: float = 1e-6
+    # accumulate log entries for this many steps before averaging and logging them
+    log_interval: int = 100
     # backend to use for logging metrics
     logger: MetricLoggerBackend = MetricLoggerBackend.NONE
     # number of tokens to generate after the thought for checking the quality of the thought
@@ -72,7 +74,7 @@ class Config:
     # number of warmup steps for the optimizer, not currently supported
     optimizer_warmup: int = 20
     # weight of the policy loss
-    policy_weight: float = 1e6
+    policy_weight: float = 16
     # number of hours between saving checkpoints
     save_interval_hours: float = 4
     # keep the last `save_top_k` checkpoints or -1 to keep all checkpoints
@@ -80,7 +82,7 @@ class Config:
     # seed for random number generators
     seed: int = 123
     # temperature to use when sampling thoughts
-    temperature: float = 0.7
+    temperature: float = 3
     # percent of samples to use for the validation set
     test_pct: float = 0.125
     # length of thought to generate

@@ -46,6 +46,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         self.thought_length = config.thought_length
         self.lookahead_tokens = config.lookahead_tokens
         self.temperature = config.temperature
+        self.policy_weight = config.policy_weight
 
         self.train_max_length = config.model.train_max_length
         self.eval_max_length = self.train_max_length
@@ -267,6 +268,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                     top_k=top_k,
                     top_p=top_p,
                     temperature=temperature,
+                    suppress=[self.start_thought_token_id, self.end_thought_token_id],
                 ).detach()
                 torch.use_deterministic_algorithms(True)
                 x = torch.concatenate([x, next_tokens], dim=-1)
@@ -470,6 +472,8 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         assert_shape(input_with_thoughts, (b, n, lp, 1 + t + 2 + a))
         assert_shape(thought_targets, (b, n, lp, t))
 
+        # calculate_loss() already adds a negative to the policy gradient
+        # so there is no need to add a negative here
         policy_loss = reward * torch.mean(
             self.calculate_loss(
                 logits_thought.float(),
@@ -481,7 +485,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         assert_shape(policy_loss, (b, n, lp))
 
         # Calculate total loss averaging across batch, thought number and token position
-        total_loss = torch.mean(loss + policy_loss).to(self._dtype)
+        total_loss = torch.mean(loss + self.policy_weight * policy_loss).to(self._dtype)
 
         self.metric_logger.log(
             {
@@ -494,11 +498,11 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                 "r_mean_avg": r_mean.mean().item(),
                 "r_mean_min": r_mean.min().item(),
                 "r_mean_max": r_mean.max().item(),
-                "reward_avg": reward.mean().item(),
-                "reward_min": reward.min().item(),
+                "reward_avg": reward[reward != 0].mean().item(),
+                "reward_min": reward[reward != 0].min().item(),
                 "reward_max": reward.max().item(),
-                "policy_loss_avg": policy_loss.mean().item(),
-                "policy_loss_min": policy_loss.min().item(),
+                "policy_loss_avg": policy_loss[policy_loss != 0].mean().item(),
+                "policy_loss_min": policy_loss[policy_loss != 0].min().item(),
                 "policy_loss_max": policy_loss.max().item(),
                 "total_loss": total_loss.item(),
             }
