@@ -31,7 +31,7 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
 
         self._dtype = torch_dtype(config.model.dtype)
 
-        # self.metric_logger = MetricLogger(config.logger, config)
+        self.metric_logger = MetricLogger(config.logger, config)
 
         model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             config.model.model_name,
