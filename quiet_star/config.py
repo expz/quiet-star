@@ -175,6 +175,8 @@ class EvalConfig:
     version: int = 0
     # epoch of checkpoint to load
     epoch: int | None = None
+    # maximum allowed length of response
+    eval_max_length: int = 512
     # step of epoch of checkpoint to load
     step: int | None = None
     # limit number of samples to evalute on

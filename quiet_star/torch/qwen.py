@@ -27,7 +27,7 @@ class QwenThoughtModel(PretrainedThoughtModel):
 
         self.save_hyperparameters()  # saves the argument(s) of __init__
 
-        self.eval_max_length = pretrained_config.sliding_window
+        self.eval_max_length = pretrained_config.max_position_embeddings
 
         self.num_kv_heads = pretrained_config.num_key_value_heads
         self.num_query_heads = pretrained_config.num_attention_heads

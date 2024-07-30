@@ -557,6 +557,7 @@ def eval_pretrained(
     epoch: int | None = None,
     step: int | None = None,
     limit: int | None = None,
+    max_length: int | None = None,
     model_name: str | None = None,
     tokenizer_name: str | None = None,
 ) -> None:
@@ -574,7 +575,12 @@ def eval_pretrained(
 
     model = model.to(model.device)
 
-    eval_model = LMEvalWrapper(model, batch_size=1, add_bos_token=True)
+    eval_model = LMEvalWrapper(
+        model,
+        batch_size=1,
+        add_bos_token=True,
+        max_length=max_length,
+    )
 
     # indexes all tasks from the `lm_eval/tasks` subdirectory.
     # Alternatively, you can set `TaskManager(include_path="path/to/my/custom/task/configs")`
@@ -606,11 +612,19 @@ def eval_openelm(
     epoch: int | None = None,
     step: int | None = None,
     limit: int | None = None,
+    max_length: int | None = None,
     model_name: str | None = None,
     tokenizer_name: str | None = None,
 ) -> None:
     return eval_pretrained(
-        OpenELMThoughtModel, version, epoch, step, limit, model_name, tokenizer_name
+        OpenELMThoughtModel,
+        version,
+        epoch,
+        step,
+        limit,
+        max_length,
+        model_name,
+        tokenizer_name,
     )
 
 
@@ -619,9 +633,17 @@ def eval_qwen(
     epoch: int | None = None,
     step: int | None = None,
     limit: int | None = None,
+    max_length: int | None = None,
     model_name: str | None = None,
     tokenizer_name: str | None = None,
 ) -> None:
     return eval_pretrained(
-        QwenThoughtModel, version, epoch, step, limit, model_name, tokenizer_name
+        QwenThoughtModel,
+        version,
+        epoch,
+        step,
+        limit,
+        max_length,
+        model_name,
+        tokenizer_name,
     )
