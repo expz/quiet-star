@@ -7,21 +7,18 @@ from quiet_star.constants import MetricLoggerBackend
 
 class MetricLogger:
     def __init__(self, backend: MetricLoggerBackend, config: Config):
+        self.initialized = False
         self.backend = backend
         self.step = -1
         self.prev_step = -2
         self.log_interval = config.log_interval
+        self.config = config
         self.reset_log_interval()
-        if backend == MetricLoggerBackend.WANDB:
-            wandb.init(  # type: ignore[attr-defined]
-                project="quiet-star",
-                config=config.as_dict(),
-            )
-        elif backend == MetricLoggerBackend.TENSORBOARD:
-            self.writer = torch.utils.tensorboard.SummaryWriter()
-        elif backend == MetricLoggerBackend.NONE:
-            pass
-        else:
+        if backend not in [
+            MetricLoggerBackend.WANDB,
+            MetricLoggerBackend.TENSORBOARD,
+            MetricLoggerBackend.NONE,
+        ]:
             raise ValueError(f"Unsupported metric logger backend: {backend}")
 
     def reset_log_interval(self) -> None:
@@ -48,7 +45,23 @@ class MetricLogger:
     def update_interval_metrics(self, i: int, metrics: dict[str, float]) -> None:
         self.interval_metrics[i].update(**metrics)
 
+    def init(self) -> None:
+        # We do not automatically initialize because the associated model
+        # might be loaded for evaluation purposes and not logging metrics,
+        # but initializing can create a new W&B run
+        if self.backend == MetricLoggerBackend.WANDB:
+            wandb.init(  # type: ignore[attr-defined]
+                project="quiet-star",
+                config=self.config.as_dict(),
+            )
+        elif self.backend == MetricLoggerBackend.TENSORBOARD:
+            self.writer = torch.utils.tensorboard.SummaryWriter()
+        self.initialized = True
+
     def log(self, metrics: dict[str, float], step: int | None = None) -> None:
+        if not self.initialized:
+            self.init()
+
         if step is None:
             self.prev_step = self.step
             self.step += 1

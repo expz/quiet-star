@@ -30,6 +30,8 @@ def main(config: EvalConfig) -> None:
         config.epoch,
         config.step,
         config.limit,
+        config.do_sample,
+        config.temperature,
         config.eval_max_length,
         config.model_name,
         config.tokenizer_name,

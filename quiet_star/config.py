@@ -49,6 +49,8 @@ class GPTModelConfig(ModelConfig):
 
 @dataclasses.dataclass
 class Config:
+    # number of batches for which to accumulate gradients before updating weights
+    accumulate_batches: int = 1
     # number of samples per batch
     batch_size: int = 1
     # beta1 and beta2 for the Adam optimizer
@@ -74,7 +76,7 @@ class Config:
     # number of warmup steps for the optimizer, not currently supported
     optimizer_warmup: int = 20
     # weight of the policy loss
-    policy_weight: float = 16
+    policy_weight: float = 1
     # number of hours between saving checkpoints
     save_interval_hours: float = 4
     # keep the last `save_top_k` checkpoints or -1 to keep all checkpoints
@@ -120,6 +122,7 @@ class QwenDefaultConfig(Config):
     Configuration for the Qwen model training process and dataset.
     """
 
+    accumulate_batches: int = 8
     batch_size: int = 1
     epochs: int = 2
     lookahead_tokens: int = 4
@@ -173,6 +176,8 @@ class EvalConfig:
 
     # version of model to load (see the lightning_logs directory) or -1 for untrained model
     version: int = 0
+    # whether to randomly sample responses instead of using greedy sampling
+    do_sample: bool = False
     # epoch of checkpoint to load
     epoch: int | None = None
     # maximum allowed length of response
@@ -183,6 +188,8 @@ class EvalConfig:
     limit: int | None = None
     # HuggingFace model name if using untrained model
     model_name: str | None = None
+    # temperature for sampling a response, only used if --do_sample argument is used
+    temperature: float = 0.7
     # HuggingFace tokenizer name if using untrained model
     tokenizer_name: str | None = None
 

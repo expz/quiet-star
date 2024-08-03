@@ -58,6 +58,8 @@ def calculate_correct_thoughts(
         # generate a thought
         for _ in range(model.thought_length):
             logits = model.model(x).logits[:, -1:]
+            logits[..., model.start_thought_token_id] = float("-inf")
+            logits[..., model.end_thought_token_id] = float("-inf")
             next_tokens = logits.argmax(dim=-1)
             x = torch.concatenate([x, next_tokens], dim=-1)
             if logits_thought is None:

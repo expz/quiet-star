@@ -254,6 +254,8 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
             logits, key_value_cache = self.generate_next_thought_token(
                 next_tokens, t, key_value_cache
             )
+            logits[..., self.start_thought_token_id] = float("-inf")
+            logits[..., self.end_thought_token_id] = float("-inf")
             if t <= self.thought_length:
                 if t == 1:
                     thought_logits = logits[:, :, -1:]
@@ -261,16 +263,13 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
                     thought_logits = torch.concatenate(
                         [thought_logits, logits[:, :, -1:]], dim=2
                     )
-                torch.use_deterministic_algorithms(False)
                 next_tokens = self.sample_next_token(
                     logits[:, :, -1, :],
                     do_sample=do_sample,
                     top_k=top_k,
                     top_p=top_p,
                     temperature=temperature,
-                    suppress=[self.start_thought_token_id, self.end_thought_token_id],
                 ).detach()
-                torch.use_deterministic_algorithms(True)
                 x = torch.concatenate([x, next_tokens], dim=-1)
 
         # (B, L, 1 + T + 2 + A)

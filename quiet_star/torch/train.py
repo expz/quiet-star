@@ -42,9 +42,10 @@ def _train(
     )
 
     trainer = lightning.pytorch.Trainer(
-        deterministic=True,
+        deterministic=False,
         accelerator="cpu" if config.model.device == "cpu" else "gpu",
         max_epochs=config.epochs,
+        accumulate_grad_batches=config.accumulate_batches,
         callbacks=[
             hourly_checkpoint_callback,
             epoch_checkpoint_callback,
