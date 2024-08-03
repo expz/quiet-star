@@ -562,6 +562,7 @@ def eval_pretrained(
     max_length: int | None = None,
     model_name: str | None = None,
     tokenizer_name: str | None = None,
+    seed: int = 123,
 ) -> None:
     if version == -1:
         print(f"loading untrained model")
@@ -601,8 +602,11 @@ def eval_pretrained(
         limit=limit,
         log_samples=True,
         # apply_chat_template=True,
-        system_instruction="You are a helpful and confident assistant. Think step-by-step. Put your final answer at the end of your reasoning following a ####. For example, if the answer is 3, then end your response with #### 3.\n",
+        system_instruction="You are a helpful and confident assistant. Think step-by-step. Respond in Markdown.\n",
         gen_kwargs=f"use_thoughts={version >= 0},do_sample={do_sample},temperature={temperature}",
+        random_seed=seed,
+        numpy_random_seed=seed,
+        torch_random_seed=seed,
     )
 
     print(json.dumps(results, indent=4, sort_keys=True))
@@ -618,6 +622,7 @@ def eval_openelm(
     max_length: int | None = None,
     model_name: str | None = None,
     tokenizer_name: str | None = None,
+    seed: int = 123,
 ) -> None:
     return eval_pretrained(
         OpenELMThoughtModel,
@@ -630,6 +635,7 @@ def eval_openelm(
         max_length,
         model_name,
         tokenizer_name,
+        seed,
     )
 
 
@@ -643,6 +649,7 @@ def eval_qwen(
     max_length: int | None = None,
     model_name: str | None = None,
     tokenizer_name: str | None = None,
+    seed: int = 123,
 ) -> None:
     return eval_pretrained(
         QwenThoughtModel,
@@ -655,4 +662,5 @@ def eval_qwen(
         max_length,
         model_name,
         tokenizer_name,
+        seed,
     )

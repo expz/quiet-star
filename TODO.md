@@ -19,11 +19,11 @@
 - [x] convert LM head to work with pretrained Huggingface model
 - [x] convert mixing head to work with pretrained Huggingface model
 - [ ] speed up training by using flash attention
-- [ ] speed up training by adding hidden state generation to generate_thoughts() function
-- [ ] check if there's any way to reduce memory usage
+- [x] speed up training by adding hidden state generation to generate_thoughts() function
+- [x] check if there's any way to reduce memory usage
 
 ## Housekeeping
-- [ ] Remove code duplication between `hidden_states()` and `generate_next_thought_token()`
+- [x] Remove code duplication between `hidden_states()` and `generate_next_thought_token()`
 - [ ] add type annotations to triton code
 - [x] create abstract base class for thinking models
 
@@ -37,5 +37,5 @@
 - [x] add generation function
 - [x] add generation script
 - [x] add GSM8K evaluation script
-- [ ] add options to evaluate using sampling instead of greedily
-- [ ] train on 512K samples and remove full disclosure if it improves performance
+- [x] add options to evaluate using sampling instead of greedily
+- [x] train on 512K samples and remove full disclosure if it improves performance

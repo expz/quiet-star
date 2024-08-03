@@ -35,6 +35,7 @@ def main(config: EvalConfig) -> None:
         config.eval_max_length,
         config.model_name,
         config.tokenizer_name,
+        config.seed,
     )
 
 

@@ -174,24 +174,26 @@ class EvalConfig:
     Configuration for evaluating a model.
     """
 
-    # version of model to load (see the lightning_logs directory) or -1 for untrained model
-    version: int = 0
     # whether to randomly sample responses instead of using greedy sampling
     do_sample: bool = False
     # epoch of checkpoint to load
     epoch: int | None = None
     # maximum allowed length of response
     eval_max_length: int = 512
-    # step of epoch of checkpoint to load
-    step: int | None = None
     # limit number of samples to evalute on
     limit: int | None = None
     # HuggingFace model name if using untrained model
     model_name: str | None = None
+    # random seed
+    seed: int = 1
+    # step of epoch of checkpoint to load
+    step: int | None = None
     # temperature for sampling a response, only used if --do_sample argument is used
     temperature: float = 0.7
     # HuggingFace tokenizer name if using untrained model
     tokenizer_name: str | None = None
+    # version of model to load (see the lightning_logs directory) or -1 for untrained model
+    version: int = 0
 
 
 @dataclasses.dataclass
