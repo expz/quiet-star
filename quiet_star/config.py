@@ -50,7 +50,7 @@ class GPTModelConfig(ModelConfig):
 @dataclasses.dataclass
 class Config:
     # number of batches for which to accumulate gradients before updating weights
-    accumulate_batches: int = 1
+    accumulate_batches: int = 8
     # number of samples per batch
     batch_size: int = 1
     # beta1 and beta2 for the Adam optimizer
@@ -122,12 +122,14 @@ class QwenDefaultConfig(Config):
     Configuration for the Qwen model training process and dataset.
     """
 
-    accumulate_batches: int = 8
+    accumulate_batches: int = 32
     batch_size: int = 1
     epochs: int = 2
+    learning_rate: float = 2e-6
     lookahead_tokens: int = 4
     max_samples: int = 2048
     num_thoughts: int = 2
+    policy_weight: float = 1
     seed: int = 1
     thought_length: int = 8
 

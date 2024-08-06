@@ -3,7 +3,7 @@ import warnings
 
 from simple_parsing import ArgumentParser
 
-# Used by load_from_checkpoint() in eval_qwen()
+# Unused imports are actually used by load_from_checkpoint() in eval_qwen()
 from quiet_star.config import (
     EvalConfig,
     QwenDefaultConfig,

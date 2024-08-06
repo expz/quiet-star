@@ -1,8 +1,10 @@
+import dataclasses
 import datetime
 
 import lightning.pytorch
 import torch
 import torch.utils.data
+import yaml
 from lightning.pytorch.callbacks import ModelCheckpoint, RichProgressBar
 
 from quiet_star.config import Config, GPTConfig
@@ -19,6 +21,10 @@ torch.set_float32_matmul_precision("medium")
 def _train(
     config: Config, model: lightning.LightningModule
 ) -> lightning.LightningModule:
+    print("************* Settings *************")
+    print(yaml.dump(dataclasses.asdict(config), indent=4, sort_keys=True))
+    print("************************************")
+
     dataset = get_open_web_math_dataset(
         model.tokenizer,
         _format_tokenizer_name(config.model.tokenizer_name),
@@ -70,6 +76,7 @@ def train_qwen(config: Config) -> QwenThoughtModel:
     lightning.pytorch.seed_everything(config.seed, workers=True)
 
     model = QwenThoughtModel(config)
+    model.metric_logger.init()
 
     return _train(config, model)
 
@@ -78,6 +85,7 @@ def train_qwen_explicit(config: Config) -> QwenExplicitThoughtModel:
     lightning.pytorch.seed_everything(config.seed, workers=True)
 
     model = QwenExplicitThoughtModel(config)
+    model.metric_logger.init()
 
     return _train(config, model)
 
@@ -86,5 +94,6 @@ def train_openelm(config: Config) -> OpenELMThoughtModel:
     lightning.pytorch.seed_everything(config.seed, workers=True)
 
     model = OpenELMThoughtModel(config)
+    model.metric_logger.init()
 
     return _train(config, model)

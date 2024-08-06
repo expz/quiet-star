@@ -486,8 +486,20 @@ class PretrainedThoughtModel(lightning.LightningModule, abc.ABC):
         # Calculate total loss averaging across batch, thought number and token position
         total_loss = torch.mean(loss + self.policy_weight * policy_loss).to(self._dtype)
 
+        # Calculate the loss if we just used the logits after thinking, only for logging purposes
+        with torch.no_grad():
+            thoughtful_loss = self.calculate_loss(
+                logits_lookahead.float(), targets, reduce=False
+            )
+            thoughtful_loss = torch.mean(thoughtful_loss, dim=-1).reshape(
+                b, self.num_thoughts, -1
+            )
+
         self.metric_logger.log(
             {
+                "thoughtful_loss_avg": thoughtful_loss.mean().item(),
+                "thoughtful_loss_min": thoughtful_loss.min().item(),
+                "thoughtful_loss_max": thoughtful_loss.max().item(),
                 "mixing_weight_avg": w.mean().item(),
                 "mixing_weight_min": w.min().item(),
                 "mixing_weight_max": w.max().item(),

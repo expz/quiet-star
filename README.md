@@ -4,7 +4,7 @@ An implementation of the Quiet-STAR paper (https://arxiv.org/pdf/2403.09629.pdf)
 
 This implementation is optimized so that it performs a minimal amount of computation when generating thoughts. The tricks used to reduce the computation were alluded to in the paper.
 
-Current status: Training on 32K samples with the default configs will match the performance of the Qwen2 model on a sample of 100 problems from GSM8K (27% => 28%) cot-pass@1 using greedy sampling. If we get a bigger improvement after some hyperparameter tuning, we will update this paragraph. The paper checks for improvements on cot-maj@8 (chain-of-thought majority vote with 8 samples), not pass@1, but evaluating using majority vote is not yet supported by this repo. 
+Current status: Training on 32K samples with the default configs will improve the performance of the Qwen2 model on a sample of 100 problems from GSM8K (27% => 32%) cot-pass@1 using greedy sampling. The paper checks for improvements on cot-maj@8 (chain-of-thought majority vote with 8 samples), not pass@1, but evaluating using majority vote is not yet supported by this repo. 
 
 ## Usage
 This repo requires Python 3.10 or later. To set up the environment on linux (if you do not have poetry installed, see appendix):

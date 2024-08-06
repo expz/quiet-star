@@ -602,7 +602,7 @@ def eval_pretrained(
         limit=limit,
         log_samples=True,
         # apply_chat_template=True,
-        system_instruction="You are a helpful and confident assistant. Think step-by-step. Respond in Markdown.\n",
+        system_instruction="You are a helpful and confident assistant. Respond to questions in Markdown. Think step-by-step.\n",
         gen_kwargs=f"use_thoughts={version >= 0},do_sample={do_sample},temperature={temperature}",
         random_seed=seed,
         numpy_random_seed=seed,
