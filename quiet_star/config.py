@@ -65,7 +65,7 @@ class Config:
     learning_rate: float = 1e-6
     # accumulate log entries for this many steps before averaging and logging them
     log_interval: int = 100
-    # backend to use for logging metrics
+    # backend to use for logging metrics (NONE, WANDB, TENSORBOARD)
     logger: MetricLoggerBackend = MetricLoggerBackend.NONE
     # number of tokens to generate after the thought for checking the quality of the thought
     lookahead_tokens: int = 4
@@ -208,3 +208,19 @@ class QwenDefaultEvalConfig(EvalConfig):
 class OpenELMDefaultEvalConfig(EvalConfig):
     model_name: str = "apple/OpenELM-270M-Instruct"
     tokenizer_name: str = "meta-llama/Llama-2-7b-hf"
+
+
+@dataclasses.dataclass
+class CompletionConfig:
+    """
+    A simple LM completion script for HuggingFace models
+    """
+
+    # data type of the language model weights
+    dtype: str = "bfloat16"
+    # device on which to run the language model
+    device: str = "cuda"
+    # name of HuggingFace model
+    model_name: str = "Qwen/Qwen2-0.5B-Instruct"
+    # name of HuggingFace tokenizer
+    tokenizer_name: str = "Qwen/Qwen2-0.5B-Instruct"

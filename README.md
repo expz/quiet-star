@@ -1,6 +1,6 @@
 # Quiet STAR
 
-An implementation of the Quiet-STAR paper (https://arxiv.org/pdf/2403.09629.pdf) including a full test suite to guarantee correctness.
+An implementation of the Quiet-STAR paper (https://arxiv.org/pdf/2403.09629.pdf) including a test suite to guarantee correctness of the optimizations.
 
 This implementation is optimized so that it performs a minimal amount of computation when generating thoughts. The tricks used to reduce the computation were alluded to in the paper.
 
